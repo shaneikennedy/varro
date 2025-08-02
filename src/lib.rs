@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::fs::{create_dir, read, write};
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::thread::{self, JoinHandle};
 
 use anyhow::Result;
 use bincode::{config, Decode, Encode};
@@ -81,7 +82,7 @@ pub struct Varro {
     documents_path: PathBuf,
 
     /// Append only in-memory buffer before flushing to disk
-    buffer: Mutex<Vec<Document>>,
+    buffer: Mutex<Vec<JoinHandle<Document>>>,
 }
 
 impl Varro {
@@ -107,7 +108,8 @@ impl Varro {
     /// Index a document, this takes a Document, stores it, adds the index to the document buffer, and returns whether it was successfull or not
     pub fn index(&self, doc: Document) -> Result<()> {
         let mut docs = self.buffer.lock().unwrap();
-        docs.push(doc);
+        let handle = thread::spawn(|| doc);
+        docs.push(handle);
         Ok(())
     }
 
@@ -133,8 +135,13 @@ impl Varro {
 
     /// Flush the documents and indexs to disk, this needs to happen before a document is searchable
     pub fn flush(&self) -> Result<()> {
-        let docs = self.buffer.lock().unwrap();
-        for doc in docs.iter() {
+        let mut docs = self.buffer.lock().unwrap();
+        for doc in docs.drain(0..) {
+            let doc = doc.join();
+            let doc = match doc {
+                Ok(d) => d,
+                Err(_) => panic!("Problem indexing document ????????"),
+            };
             let id = doc.id.clone();
             println!("about to save file: {}", id);
             let p = self.documents_path.join(id.clone());
