@@ -1,11 +1,11 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::{create_dir, read, write};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::thread::{self, JoinHandle};
 
 use anyhow::Result;
-use bincode::{config, Decode, Encode};
+use bincode::{Decode, Encode, config};
 use std::hash::{Hash, Hasher};
 use uuid::Uuid;
 
@@ -82,7 +82,7 @@ pub struct Varro {
     documents_path: PathBuf,
 
     /// Append only in-memory buffer before flushing to disk
-    buffer: Mutex<Vec<JoinHandle<Document>>>,
+    buffer: Mutex<Vec<JoinHandle<DocumentSegment>>>,
 }
 
 impl Varro {
@@ -107,10 +107,25 @@ impl Varro {
 
     /// Index a document, this takes a Document, stores it, adds the index to the document buffer, and returns whether it was successfull or not
     pub fn index(&self, doc: Document) -> Result<()> {
+        // First things first get this thing written to disk
+        self.write_doc(&doc)?;
+
+        // Then add it to the varro buffer to be indexed
         let mut docs = self.buffer.lock().unwrap();
-        let handle = thread::spawn(|| doc);
+        let handle = thread::spawn(move || tokenize(&doc));
         docs.push(handle);
         Ok(())
+    }
+
+    /// Write a Document to the documents_path for durability and retrieval
+    fn write_doc(&self, doc: &Document) -> Result<()> {
+        let id = doc.id.clone();
+        println!("about to save file: {}", id);
+        let p = self.documents_path.join(id.clone());
+        println!("about to save file to dir {}", id);
+        let config = config::standard();
+        let bytes = bincode::encode_to_vec(doc, config)?;
+        Ok(write(p, bytes)?)
     }
 
     /// Text search, given an input string query the index and return a list of Documents that match the search
@@ -133,24 +148,55 @@ impl Varro {
         }
     }
 
-    /// Flush the documents and indexs to disk, this needs to happen before a document is searchable
+    /// Flush the indexes to disk, this needs to happen before a document is searchable
+    /// How will this work, the varro.index method will spawn a thread that does tokenize(doc) and retruns a segment. Then during flush, we take all the DocumentSegment objects in the buffer, reduce over them to generate a single Segment object that has a term list, with each term mapping to a TF list (doc_id + frequency) and a DF total number of docs with this term. Flush will write the aggregated Segment to disk
     pub fn flush(&self) -> Result<()> {
+        // TODO at this poiint we have a list of "indexing jobs". We need to acquire the lock,
+        // wait for any jobs that haven't finished, and reduce all of the DocumentSegments into
+        // a single SegmentInfo
         let mut docs = self.buffer.lock().unwrap();
         for doc in docs.drain(0..) {
             let doc = doc.join();
-            let doc = match doc {
-                Ok(d) => d,
+            match doc {
+                Ok(d) => println!("Received DocumentSegment for document: {}", d.document_id),
                 Err(_) => panic!("Problem indexing document ????????"),
             };
-            let id = doc.id.clone();
-            println!("about to save file: {}", id);
-            let p = self.documents_path.join(id.clone());
-            println!("about to save file to dir {}", id);
-            let config = config::standard();
-            let bytes = bincode::encode_to_vec(doc, config)?;
-            write(p, bytes)?;
-            println!("Successfully indexed document: {}", id.clone());
         }
+
+        // TODO write the segment info to disk
+        println!("Successfully wrote segment file ");
         Ok(())
+    }
+}
+
+struct DocumentSegment {
+    document_id: String,
+
+    #[allow(dead_code)]
+    terms: HashMap<String, i32>,
+}
+
+impl DocumentSegment {
+    pub fn new(doc: &Document) -> Self {
+        DocumentSegment {
+            document_id: doc.id(),
+            terms: HashMap::new(),
+        }
+    }
+}
+
+fn tokenize(doc: &Document) -> DocumentSegment {
+    DocumentSegment::new(doc)
+}
+
+#[cfg(test)]
+mod tokenize_tests {
+    use super::*;
+
+    #[test]
+    fn test_tokenize() {
+        let doc = Document::new();
+        let doc_seg = tokenize(&doc);
+        assert_eq!(doc.id(), doc_seg.document_id);
     }
 }
