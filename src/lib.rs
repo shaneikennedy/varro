@@ -112,7 +112,7 @@ impl Varro {
 
         // Then add it to the varro buffer to be indexed
         let mut docs = self.buffer.lock().unwrap();
-        let handle = thread::spawn(move || tokenize(&doc));
+        let handle = thread::spawn(move || DocumentSegment::new(&doc));
         docs.push(handle);
         Ok(())
     }
@@ -158,7 +158,7 @@ impl Varro {
         for doc in docs.drain(0..) {
             let doc = doc.join();
             match doc {
-                Ok(d) => println!("Received DocumentSegment for document: {}", d.document_id),
+                Ok(d) => println!("Received DocumentSegment {:#?}", d),
                 Err(_) => panic!("Problem indexing document ????????"),
             };
         }
@@ -169,24 +169,51 @@ impl Varro {
     }
 }
 
+#[derive(Debug)]
 struct DocumentSegment {
+    #[allow(dead_code)]
     document_id: String,
 
-    #[allow(dead_code)]
     terms: HashMap<String, i32>,
 }
 
 impl DocumentSegment {
     pub fn new(doc: &Document) -> Self {
-        DocumentSegment {
+        let mut doc_seg = DocumentSegment {
             document_id: doc.id(),
             terms: HashMap::new(),
+        };
+        for field in doc.fields.iter() {
+            let content = tokenize(&field.contents);
+            content.for_each(|w| {
+                doc_seg.terms.entry(w).and_modify(|v| *v += 1).or_insert(1);
+            });
         }
+        doc_seg
     }
 }
 
-fn tokenize(doc: &Document) -> DocumentSegment {
-    DocumentSegment::new(doc)
+fn tokenize(contents: &str) -> impl Iterator<Item = String> {
+    contents.split_whitespace().map(|w| w.to_lowercase())
+}
+
+#[cfg(test)]
+mod document_segment_tests {
+    use super::*;
+
+    #[test]
+    fn test_document_segment() {
+        let mut doc = Document::new();
+	doc.add_field("name".into(), "wow such nice test".into(), true);
+	doc.add_field("body".into(), "wow such nice test again".into(), true);
+        let doc_seg = DocumentSegment::new(&doc);
+        assert_eq!(doc.id(), doc_seg.document_id);
+	assert_eq!(doc_seg.terms.get("wow"), Some(&2));
+	assert_eq!(doc_seg.terms.get("such"), Some(&2));
+	assert_eq!(doc_seg.terms.get("nice"), Some(&2));
+	assert_eq!(doc_seg.terms.get("test"), Some(&2));
+	assert_eq!(doc_seg.terms.get("again"), Some(&1));
+    }
 }
 
 #[cfg(test)]
@@ -194,9 +221,9 @@ mod tokenize_tests {
     use super::*;
 
     #[test]
-    fn test_tokenize() {
-        let doc = Document::new();
-        let doc_seg = tokenize(&doc);
-        assert_eq!(doc.id(), doc_seg.document_id);
+    fn test_tokenize_lower_cases() {
+        let contents = "The smAll anD sIlly kitty Cat".to_string();
+        let tokens: Vec<String> = tokenize(&contents).collect();
+        assert_eq!(vec!["the", "small", "and", "silly", "kitty", "cat"], tokens);
     }
 }
