@@ -193,8 +193,16 @@ impl DocumentSegment {
     }
 }
 
+// TODO consider phf crate for O(1) lookups if this grows or sucks
+const STOP_WORDS: [&str; 10] = ["the", "and", "is", "in", "at", "of", "to", "a", "an", "for"];
 fn tokenize(contents: &str) -> impl Iterator<Item = String> {
-    contents.split_whitespace().map(|w| w.to_lowercase())
+    contents.split_whitespace().filter_map(|w| {
+        if !STOP_WORDS.contains(&w.to_lowercase().as_str()) {
+            Some(w.to_lowercase())
+        } else {
+            None
+        }
+    })
 }
 
 #[cfg(test)]
@@ -204,15 +212,15 @@ mod document_segment_tests {
     #[test]
     fn test_document_segment() {
         let mut doc = Document::new();
-	doc.add_field("name".into(), "wow such nice test".into(), true);
-	doc.add_field("body".into(), "wow such nice test again".into(), true);
+        doc.add_field("name".into(), "wow such nice test".into(), true);
+        doc.add_field("body".into(), "wow such nice test again".into(), true);
         let doc_seg = DocumentSegment::new(&doc);
         assert_eq!(doc.id(), doc_seg.document_id);
-	assert_eq!(doc_seg.terms.get("wow"), Some(&2));
-	assert_eq!(doc_seg.terms.get("such"), Some(&2));
-	assert_eq!(doc_seg.terms.get("nice"), Some(&2));
-	assert_eq!(doc_seg.terms.get("test"), Some(&2));
-	assert_eq!(doc_seg.terms.get("again"), Some(&1));
+        assert_eq!(doc_seg.terms.get("wow"), Some(&2));
+        assert_eq!(doc_seg.terms.get("such"), Some(&2));
+        assert_eq!(doc_seg.terms.get("nice"), Some(&2));
+        assert_eq!(doc_seg.terms.get("test"), Some(&2));
+        assert_eq!(doc_seg.terms.get("again"), Some(&1));
     }
 }
 
@@ -222,8 +230,15 @@ mod tokenize_tests {
 
     #[test]
     fn test_tokenize_lower_cases() {
-        let contents = "The smAll anD sIlly kitty Cat".to_string();
+        let contents = "smAll sIlly kitTy Cat".to_string();
         let tokens: Vec<String> = tokenize(&contents).collect();
-        assert_eq!(vec!["the", "small", "and", "silly", "kitty", "cat"], tokens);
+        assert_eq!(vec!["small", "silly", "kitty", "cat"], tokens);
+    }
+
+    #[test]
+    fn test_tokenize_removes_stop_words() {
+        let contents = "For once and for all".to_string();
+        let tokens: Vec<String> = tokenize(&contents).collect();
+        assert_eq!(vec!["once", "all"], tokens);
     }
 }
