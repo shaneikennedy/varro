@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use std::thread::{self, JoinHandle};
 
 use anyhow::Result;
-use bincode::{config, Decode, Encode};
+use bincode::{Decode, Encode, config};
 use std::hash::{Hash, Hasher};
 use uuid::Uuid;
 
@@ -124,9 +124,9 @@ impl Varro {
     /// Write a Document to the documents_path for durability and retrieval
     fn write_doc(&self, doc: &Document) -> Result<()> {
         let id = doc.id.clone();
-        println!("about to save file: {}", id);
+        println!("about to save file: {id}");
         let p = self.documents_path.join(id.clone());
-        println!("about to save file to dir {}", id);
+        println!("about to save file to dir {id}");
         let config = config::standard();
         let bytes = bincode::encode_to_vec(doc, config)?;
         Ok(write(p, bytes)?)
@@ -134,7 +134,7 @@ impl Varro {
 
     /// Text search, given an input string query the index and return a list of Documents that match the search
     pub fn search(&self, query: String) -> Vec<Document> {
-        println!("Searching for {}", query);
+        println!("Searching for {query}");
         Vec::new()
     }
 
