@@ -1,11 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::fs::{create_dir, read, write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::thread::{self, JoinHandle};
 
 use anyhow::Result;
-use bincode::{Decode, Encode, config};
+use bincode::{config, Decode, Encode};
 use std::hash::{Hash, Hasher};
 use uuid::Uuid;
 
@@ -105,6 +105,10 @@ impl Varro {
         Ok(varro)
     }
 
+    pub fn index_path(&self) -> &Path {
+        self.index_path.as_path()
+    }
+
     /// Index a document, this takes a Document, stores it, adds the index to the document buffer, and returns whether it was successfull or not
     pub fn index(&self, doc: Document) -> Result<()> {
         // First things first get this thing written to disk
@@ -154,18 +158,81 @@ impl Varro {
         // TODO at this poiint we have a list of "indexing jobs". We need to acquire the lock,
         // wait for any jobs that haven't finished, and reduce all of the DocumentSegments into
         // a single SegmentInfo
+        let mut segment = Segment::new();
         let mut docs = self.buffer.lock().unwrap();
-        for doc in docs.drain(0..) {
-            let doc = doc.join();
-            match doc {
-                Ok(d) => println!("Received DocumentSegment {:#?}", d),
+        for doc_seg in docs.drain(0..) {
+            let doc_seg = doc_seg.join();
+            let doc_seg = match doc_seg {
+                Ok(d) => d,
                 Err(_) => panic!("Problem indexing document ????????"),
             };
+            segment.add_docucment_segment(&doc_seg);
         }
 
         // TODO write the segment info to disk
-        println!("Successfully wrote segment file ");
-        Ok(())
+        println!("Successfully wrote segment file {segment:#?}");
+        self.write_segment(&segment)
+    }
+
+    fn write_segment(&self, seg: &Segment) -> Result<()> {
+        let config = config::standard();
+        let bytes = bincode::encode_to_vec(seg, config)?;
+        Ok(write(
+            self.index_path().join(Uuid::new_v4().to_string() + ".seg"),
+            bytes,
+        )?)
+    }
+}
+
+/// A Segment is just a map of terms to TFDFs for a given "flush".
+#[derive(Encode, Debug)]
+struct Segment {
+    term_index: HashMap<String, Tfdf>,
+}
+
+impl Segment {
+    fn new() -> Self {
+        Self {
+            term_index: HashMap::new(),
+        }
+    }
+
+    fn add_docucment_segment(&mut self, seg: &DocumentSegment) {
+        for (term, term_count) in seg.terms.iter() {
+            let mut tfdf = Tfdf::new(term);
+            tfdf.add_for_doc(seg);
+            self.term_index
+                .entry(term.to_string())
+                .and_modify(|t| t.term_freq.push((seg.document_id(), *term_count)))
+                .or_insert(tfdf);
+        }
+    }
+}
+
+/// A TFDF is holds the info for which documents (id, the String in the term_freq map) have a given term and it's count (the i32 in the term_freq map)
+/// and the total number of documents that the term appears in
+#[derive(Encode, Debug)]
+struct Tfdf {
+    term: String,
+    term_freq: Vec<(String, i32)>,
+    doc_freq: i32,
+}
+
+impl Tfdf {
+    pub fn new(term: &str) -> Self {
+        Self {
+            term: term.into(),
+            term_freq: Vec::new(),
+            doc_freq: 0,
+        }
+    }
+
+    pub fn add_for_doc(&mut self, doc_seg: &DocumentSegment) {
+        self.term_freq.push((
+            doc_seg.document_id(),
+            *doc_seg.terms.get(&self.term).unwrap(),
+        ));
+        self.doc_freq += 1;
     }
 }
 
@@ -190,6 +257,10 @@ impl DocumentSegment {
             });
         }
         doc_seg
+    }
+
+    pub fn document_id(&self) -> String {
+        self.document_id.clone()
     }
 }
 
