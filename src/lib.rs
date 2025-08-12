@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::fs::{create_dir, read, write};
+use std::fs::{create_dir, read, read_dir, write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::thread::{self, JoinHandle};
@@ -132,10 +132,59 @@ impl Varro {
         Ok(write(p, bytes)?)
     }
 
-    /// Text search, given an input string query the index and return a list of Documents that match the search
-    pub fn search(&self, query: String) -> Vec<Document> {
+    /// Text search, given an input string query the index and return a list of Document Ids that match the search
+    pub fn search(&self, query: String) -> Vec<String> {
         println!("Searching for {query}");
-        Vec::new()
+        let tokens = tokenize(query.as_str());
+
+        // Get all the segment files and load them into memory, merging them all into a master segment
+        let segment_files = read_dir(self.index_path.clone())
+            .unwrap()
+            .filter_map(|f| f.ok())
+            .filter(|d| d.file_name().into_string().unwrap().contains(".seg"));
+        let mut master_segment = Segment::new();
+        for f in segment_files {
+            if f.file_type().unwrap().is_file() {
+                let contents = read(f.path());
+                let segment = match contents {
+                    Ok(c) => {
+                        let config = config::standard();
+                        let (decoded, _): (Segment, usize) =
+                            bincode::decode_from_slice(&c[..], config).unwrap();
+                        Some(decoded)
+                    }
+                    Err(_) => None,
+                };
+
+                // Merge the segments
+                match segment {
+                    Some(s) => {
+                        for (term, tfdf) in s.term_index {
+                            master_segment
+                                .term_index
+                                .entry(term)
+                                .and_modify(|t| {
+                                    t.doc_freq += tfdf.doc_freq;
+                                    t.term_freq.extend(tfdf.term_freq.clone());
+                                })
+                                .or_insert(tfdf);
+                        }
+                    }
+                    None => println!("Unable to read segment file {:#?}", f.path()),
+                }
+            }
+        }
+
+        // Collect any doc where any token in the query exist, of tfidf/scoring yet
+        let mut matching_docs: HashSet<String> = HashSet::new();
+        for token in tokens {
+            if let Some(tfdf) = master_segment.term_index.get(&token) {
+                tfdf.term_freq.iter().for_each(|(doc_id, _)| {
+                    matching_docs.insert(doc_id.to_string());
+                });
+            }
+        }
+        matching_docs.into_iter().collect::<Vec<String>>()
     }
 
     /// Retrive a document by it's Document.id, returns an Option type wrapping a Document
@@ -185,7 +234,7 @@ impl Varro {
 }
 
 /// A Segment is just a map of terms to TFDFs for a given "flush".
-#[derive(Encode, Debug)]
+#[derive(Encode, Decode, Debug)]
 struct Segment {
     term_index: HashMap<String, Tfdf>,
 }
@@ -211,7 +260,7 @@ impl Segment {
 
 /// A TFDF is holds the info for which documents (id, the String in the term_freq map) have a given term and it's count (the i32 in the term_freq map)
 /// and the total number of documents that the term appears in
-#[derive(Encode, Debug)]
+#[derive(Encode, Decode, Debug)]
 struct Tfdf {
     term: String,
     term_freq: Vec<(String, i32)>,
