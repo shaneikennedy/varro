@@ -1,3 +1,6 @@
+use log::{LevelFilter, info};
+
 fn main() {
-    println!("Document: {}", varro::Document::new().id());
+    env_logger::builder().filter_level(LevelFilter::Info).init();
+    info!("Document: {}", varro::Document::new().id());
 }

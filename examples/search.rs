@@ -1,8 +1,10 @@
 use std::{fs::read_to_string, path::Path};
 
 use anyhow::Result;
+use log::{LevelFilter, error, info};
 
 fn main() -> Result<()> {
+    env_logger::builder().filter_level(LevelFilter::Info).init();
     let contents = read_to_string("./documents/git-intro.md")?;
     let search_engine = varro::Varro::new(Path::new("./.index"))?;
     let mut doc = varro::Document::new();
@@ -12,7 +14,7 @@ fn main() -> Result<()> {
     search_engine.flush()?;
 
     let res = search_engine.search("git and commit".into());
-    println!("Found 'git' in docs: {res:#?}");
+    info!("Found 'git' in docs: {res:#?}");
 
     for doc_id in res {
         let retrieved_doc = search_engine.retrieve(doc_id);
@@ -21,13 +23,13 @@ fn main() -> Result<()> {
                 let c = d.get_field("contents".into()).unwrap();
                 let mut c = c.contents();
                 c.truncate(100);
-                println!("Search result doc: {}, with contents: {}", d.id(), c);
-                println!(
+                info!("Search result doc: {}, with contents: {}", d.id(), c);
+                info!(
                     "Search result doc contains search query: {}",
                     c.contains("git")
                 );
             }
-            None => println!("Somethings wrong, couldn't find doc"),
+            None => error!("Somethings wrong, couldn't find doc"),
         }
     }
 

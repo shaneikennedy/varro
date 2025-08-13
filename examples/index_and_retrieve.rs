@@ -1,8 +1,10 @@
 use std::{fs::read_to_string, path::Path};
 
 use anyhow::Result;
+use log::{LevelFilter, info};
 
 fn main() -> Result<()> {
+    env_logger::builder().filter_level(LevelFilter::Info).init();
     let contents = read_to_string("./documents/git-intro.md")?;
     let search_engine = varro::Varro::new(Path::new("./.index"))?;
     let mut doc = varro::Document::new();
@@ -18,9 +20,9 @@ fn main() -> Result<()> {
             let c = d.get_field("contents".into()).unwrap();
             let mut c = c.contents();
             c.truncate(100);
-            println!("Found doc: {}, with contents: {}", d.id(), c)
+            info!("Found doc: {}, with contents: {}", d.id(), c)
         }
-        None => println!("Somethings wrong, couldn't find doc"),
+        None => info!("Somethings wrong, couldn't find doc"),
     }
     Ok(())
 }

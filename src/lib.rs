@@ -6,6 +6,7 @@ use std::thread::{self, JoinHandle};
 
 use anyhow::{Error, Result};
 use bincode::{Decode, Encode, config};
+use log::{error, info, warn};
 use std::hash::{Hash, Hasher};
 use uuid::Uuid;
 
@@ -95,11 +96,11 @@ impl Varro {
             buffer: Mutex::new(Vec::new()),
         };
         match path.exists() {
-            true => println!("Index dir exists"),
+            true => info!("Index dir exists"),
             false => create_dir(path)?,
         };
         match documents_path.exists() {
-            true => println!("Documents subdir dir exists"),
+            true => info!("Documents subdir dir exists"),
             false => create_dir(documents_path)?,
         };
         Ok(varro)
@@ -124,9 +125,7 @@ impl Varro {
     /// Write a Document to the documents_path for durability and retrieval
     fn write_doc(&self, doc: &Document) -> Result<()> {
         let id = doc.id.clone();
-        println!("about to save file: {id}");
         let p = self.documents_path.join(id.clone());
-        println!("about to save file to dir {id}");
         let config = config::standard();
         let bytes = bincode::encode_to_vec(doc, config)?;
         Ok(write(p, bytes)?)
@@ -134,7 +133,7 @@ impl Varro {
 
     /// Text search, given an input string query the index and return a list of Document Ids that match the search
     pub fn search(&self, query: String) -> Vec<String> {
-        println!("Searching for {query}");
+        info!("Searching for {query}");
         let tokens = tokenize(query.as_str());
 
         // Get all the segment files and load them into memory, merging them all into a master segment
@@ -170,7 +169,7 @@ impl Varro {
                                 .or_insert(tfdf);
                         }
                     }
-                    None => println!("Unable to read segment file {:#?}", f.path()),
+                    None => warn!("Unable to read segment file {:#?}", f.path()),
                 }
             }
         }
@@ -202,11 +201,7 @@ impl Varro {
     }
 
     /// Flush the indexes to disk, this needs to happen before a document is searchable
-    /// How will this work, the varro.index method will spawn a thread that does tokenize(doc) and retruns a segment. Then during flush, we take all the DocumentSegment objects in the buffer, reduce over them to generate a single Segment object that has a term list, with each term mapping to a TF list (doc_id + frequency) and a DF total number of docs with this term. Flush will write the aggregated Segment to disk
     pub fn flush(&self) -> Result<()> {
-        // TODO at this poiint we have a list of "indexing jobs". We need to acquire the lock,
-        // wait for any jobs that haven't finished, and reduce all of the DocumentSegments into
-        // a single SegmentInfo
         let mut segment = Segment::new();
         let mut docs = self.buffer.lock().unwrap();
         for doc_seg in docs.drain(0..) {
@@ -218,9 +213,6 @@ impl Varro {
             let doc_seg = doc_seg.unwrap();
             segment.add_docucment_segment(&doc_seg);
         }
-
-        // TODO write the segment info to disk
-        println!("Successfully wrote segment file {segment:#?}");
         self.write_segment(&segment)
     }
 
