@@ -1,10 +1,10 @@
-use std::{fs::read_to_string, path::PathBuf};
+use std::{fs::read_to_string, path::Path};
 
 use anyhow::Result;
 
 fn main() -> Result<()> {
     let contents = read_to_string("./documents/git-intro.md")?;
-    let search_engine = varro::Varro::new(PathBuf::from("./.index"))?;
+    let search_engine = varro::Varro::new(Path::new("./.index"))?;
     let mut doc = varro::Document::new();
     let id = doc.id();
     doc.add_field("name".into(), "git-intro".into(), false);

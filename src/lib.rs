@@ -87,10 +87,10 @@ pub struct Varro {
 
 impl Varro {
     /// Contruct a new instance of Varro
-    pub fn new(path: PathBuf) -> Result<Varro> {
+    pub fn new(path: &Path) -> Result<Varro> {
         let documents_path = path.join("documents");
         let varro = Varro {
-            index_path: path.clone(),
+            index_path: path.to_path_buf(),
             documents_path: documents_path.clone(),
             buffer: Mutex::new(Vec::new()),
         };
