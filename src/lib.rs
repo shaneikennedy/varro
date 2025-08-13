@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::thread::{self, JoinHandle};
 
-use anyhow::Result;
+use anyhow::{Error, Result};
 use bincode::{Decode, Encode, config};
 use std::hash::{Hash, Hasher};
 use uuid::Uuid;
@@ -211,10 +211,11 @@ impl Varro {
         let mut docs = self.buffer.lock().unwrap();
         for doc_seg in docs.drain(0..) {
             let doc_seg = doc_seg.join();
-            let doc_seg = match doc_seg {
-                Ok(d) => d,
-                Err(_) => panic!("Problem indexing document ????????"),
-            };
+            if doc_seg.is_err() {
+                error!("Problem indexing document ????????");
+                return Err(Error::msg("problem indexing this document"));
+            }
+            let doc_seg = doc_seg.unwrap();
             segment.add_docucment_segment(&doc_seg);
         }
 
