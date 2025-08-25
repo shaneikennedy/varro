@@ -132,7 +132,7 @@ impl Varro {
     }
 
     /// Text search, given an input string query the index and return a list of Document Ids that match the search
-    pub fn search(&self, query: String) -> Vec<String> {
+    pub fn search(&self, query: String) -> impl Iterator<Item = String>{
         info!("Searching for {query}");
         let tokens = tokenize(query.as_str());
 
@@ -176,6 +176,7 @@ impl Varro {
 
         // Collect any doc where any token in the query exist, of tfidf/scoring yet
         let mut matching_docs: HashSet<String> = HashSet::new();
+
         for token in tokens {
             if let Some(tfdf) = master_segment.term_index.get(&token) {
                 tfdf.term_freq.iter().for_each(|(doc_id, _)| {
@@ -183,7 +184,7 @@ impl Varro {
                 });
             }
         }
-        matching_docs.into_iter().collect::<Vec<String>>()
+        matching_docs.into_iter()
     }
 
     /// Retrive a document by it's Document.id, returns an Option type wrapping a Document

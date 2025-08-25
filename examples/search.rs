@@ -14,8 +14,6 @@ fn main() -> Result<()> {
     search_engine.flush()?;
 
     let res = search_engine.search("git and commit".into());
-    info!("Found 'git' in docs: {res:#?}");
-
     for doc_id in res {
         let retrieved_doc = search_engine.retrieve(doc_id);
         match retrieved_doc {
