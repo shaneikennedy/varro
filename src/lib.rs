@@ -132,7 +132,7 @@ impl Varro {
     }
 
     /// Text search, given an input string query the index and return a list of Document Ids that match the search
-    pub fn search(&self, query: String) -> impl Iterator<Item = String>{
+    pub fn search(&self, query: String) -> impl Iterator<Item = String> {
         info!("Searching for {query}");
         let tokens = tokenize(query.as_str());
 
@@ -257,6 +257,9 @@ impl Segment {
 #[derive(Encode, Decode, Debug)]
 struct Tfdf {
     term: String,
+
+    // Each tuple is a document_id, and the normalized fresquency
+    // for the term in this doc, that is, # occurances / total words in the doc
     term_freq: Vec<(String, i32)>,
     doc_freq: i32,
 }
@@ -273,7 +276,7 @@ impl Tfdf {
     pub fn add_for_doc(&mut self, doc_seg: &DocumentSegment) {
         self.term_freq.push((
             doc_seg.document_id(),
-            *doc_seg.terms.get(&self.term).unwrap(),
+            *doc_seg.terms.get(&self.term).unwrap() / doc_seg.document_length, // Normalize the TF by the document length
         ));
         self.doc_freq += 1;
     }
@@ -283,7 +286,8 @@ impl Tfdf {
 struct DocumentSegment {
     #[allow(dead_code)]
     document_id: String,
-
+    // Total number of words in the doc
+    document_length: i32,
     terms: HashMap<String, i32>,
 }
 
@@ -291,14 +295,18 @@ impl DocumentSegment {
     pub fn new(doc: &Document) -> Self {
         let mut doc_seg = DocumentSegment {
             document_id: doc.id(),
+            document_length: 0,
             terms: HashMap::new(),
         };
+        let mut word_count = 0;
         for field in doc.fields.iter() {
             let content = tokenize(&field.contents);
             content.for_each(|w| {
+                word_count += 1;
                 doc_seg.terms.entry(w).and_modify(|v| *v += 1).or_insert(1);
             });
         }
+        doc_seg.document_length = word_count;
         doc_seg
     }
 
