@@ -131,8 +131,9 @@ impl Varro {
         Ok(write(p, bytes)?)
     }
 
-    /// Text search, given an input string query the index and return a list of Document Ids that match the search
-    pub fn search(&self, query: String) -> impl Iterator<Item = String> {
+    /// Text search, given an input string query the index and return a list of Document Ids
+    /// and their corresponding TDIDF score (higher is better) that match the search
+    pub fn search(&self, query: String) -> impl Iterator<Item = DocumentScore> {
         info!("Searching for {query}");
         let tokens = tokenize(query.as_str());
 
@@ -175,12 +176,17 @@ impl Varro {
         }
 
         // Collect any doc where any token in the query exist, of tfidf/scoring yet
-        let mut matching_docs: HashSet<String> = HashSet::new();
 
+        let mut matching_docs: HashSet<DocumentScore> = HashSet::new();
         for token in tokens {
             if let Some(tfdf) = master_segment.term_index.get(&token) {
-                tfdf.term_freq.iter().for_each(|(doc_id, _)| {
-                    matching_docs.insert(doc_id.to_string());
+                tfdf.term_freq.iter().for_each(|(doc_id, tf)| {
+                    // TODO a real IDF
+                    let tfidf = tf * 0.5;
+                    matching_docs.insert(DocumentScore {
+                        document_id: doc_id.to_string(),
+                        score: tfidf,
+                    });
                 });
             }
         }
@@ -227,6 +233,26 @@ impl Varro {
     }
 }
 
+pub struct DocumentScore {
+    pub document_id: String,
+    #[allow(dead_code)]
+    pub score: f64,
+}
+
+impl PartialEq for DocumentScore {
+    fn eq(&self, other: &Self) -> bool {
+        self.document_id == other.document_id
+    }
+}
+
+impl Eq for DocumentScore {}
+
+impl Hash for DocumentScore {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.document_id.hash(state);
+    }
+}
+
 /// A Segment is just a map of terms to TFDFs for a given "flush".
 #[derive(Encode, Decode, Debug)]
 struct Segment {
@@ -240,14 +266,20 @@ impl Segment {
         }
     }
 
+    // For a segment, update the existing term_index with all
+    // the terms and corresponding TFs from DocumentSegment
+    // if the term doesn't already exist in the term index, insert a new one
     fn add_docucment_segment(&mut self, seg: &DocumentSegment) {
-        for (term, term_count) in seg.terms.iter() {
-            let mut tfdf = Tfdf::new(term);
-            tfdf.add_for_doc(seg);
-            self.term_index
-                .entry(term.to_string())
-                .and_modify(|t| t.term_freq.push((seg.document_id(), *term_count)))
-                .or_insert(tfdf);
+        for (term, _) in seg.terms.iter() {
+            if self.term_index.contains_key(term) {
+                self.term_index
+                    .entry(term.to_string())
+                    .and_modify(|t| t.add_for_doc(seg));
+            } else {
+                let mut tfdf = Tfdf::new(term);
+                tfdf.add_for_doc(seg);
+                self.term_index.insert(term.to_string(), tfdf);
+            }
         }
     }
 }
@@ -260,7 +292,7 @@ struct Tfdf {
 
     // Each tuple is a document_id, and the normalized fresquency
     // for the term in this doc, that is, # occurances / total words in the doc
-    term_freq: Vec<(String, i32)>,
+    term_freq: Vec<(String, f64)>,
     doc_freq: i32,
 }
 
@@ -276,7 +308,7 @@ impl Tfdf {
     pub fn add_for_doc(&mut self, doc_seg: &DocumentSegment) {
         self.term_freq.push((
             doc_seg.document_id(),
-            *doc_seg.terms.get(&self.term).unwrap() / doc_seg.document_length, // Normalize the TF by the document length
+            *doc_seg.terms.get(&self.term).unwrap() as f64 / doc_seg.document_length as f64, // Normalize the TF by the document length
         ));
         self.doc_freq += 1;
     }
