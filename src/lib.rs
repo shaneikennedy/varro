@@ -131,8 +131,9 @@ impl Varro {
         Ok(write(p, bytes)?)
     }
 
-    /// Text search, given an input string query the index and return a list of Document Ids that match the search
-    pub fn search(&self, query: String) -> impl Iterator<Item = String> {
+    /// Text search, given an input string query the index and return a list of Document Ids
+    /// and their corresponding TDIDF score (higher is better) that match the search
+    pub fn search(&self, query: String) -> impl Iterator<Item = DocumentScore> {
         info!("Searching for {query}");
         let tokens = tokenize(query.as_str());
 
@@ -175,12 +176,17 @@ impl Varro {
         }
 
         // Collect any doc where any token in the query exist, of tfidf/scoring yet
-        let mut matching_docs: HashSet<String> = HashSet::new();
 
+        let mut matching_docs: HashSet<DocumentScore> = HashSet::new();
         for token in tokens {
             if let Some(tfdf) = master_segment.term_index.get(&token) {
-                tfdf.term_freq.iter().for_each(|(doc_id, _)| {
-                    matching_docs.insert(doc_id.to_string());
+                tfdf.term_freq.iter().for_each(|(doc_id, tf)| {
+                    // TODO a real IDF
+                    let tfidf = tf * 0.5;
+                    matching_docs.insert(DocumentScore {
+                        document_id: doc_id.to_string(),
+                        score: tfidf,
+                    });
                 });
             }
         }
@@ -224,6 +230,26 @@ impl Varro {
             self.index_path().join(Uuid::new_v4().to_string() + ".seg"),
             bytes,
         )?)
+    }
+}
+
+pub struct DocumentScore {
+    pub document_id: String,
+    #[allow(dead_code)]
+    pub score: f64,
+}
+
+impl PartialEq for DocumentScore {
+    fn eq(&self, other: &Self) -> bool {
+        self.document_id == other.document_id
+    }
+}
+
+impl Eq for DocumentScore {}
+
+impl Hash for DocumentScore {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.document_id.hash(state);
     }
 }
 
