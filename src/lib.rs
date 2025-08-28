@@ -2,6 +2,8 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{create_dir, read, read_dir, write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering::SeqCst;
 use std::thread::{self, JoinHandle};
 
 use anyhow::{Error, Result};
@@ -84,16 +86,24 @@ pub struct Varro {
 
     /// Append only in-memory buffer before flushing to disk
     buffer: Mutex<Vec<JoinHandle<DocumentSegment>>>,
+
+    /// Total documents in the index, used for IDF calculations
+    total_docs: AtomicUsize,
 }
 
 impl Varro {
     /// Contruct a new instance of Varro
     pub fn new(path: &Path) -> Result<Varro> {
         let documents_path = path.join("documents");
+        // TODO actually count the docs in the index
+        let docs_in_index: Vec<String> = Vec::new();
+        let total_docs = docs_in_index.len();
+
         let varro = Varro {
             index_path: path.to_path_buf(),
             documents_path: documents_path.clone(),
             buffer: Mutex::new(Vec::new()),
+            total_docs: AtomicUsize::new(total_docs),
         };
         match path.exists() {
             true => info!("Index dir exists"),
@@ -219,6 +229,9 @@ impl Varro {
             }
             let doc_seg = doc_seg.unwrap();
             segment.add_docucment_segment(&doc_seg);
+
+            // TODO: this wraps around on overflow
+            self.total_docs.fetch_add(1, SeqCst);
         }
         self.write_segment(&segment)
     }
