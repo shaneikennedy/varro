@@ -1,10 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::fs::{create_dir, read, read_dir, write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 use anyhow::{Error, Result};
 use bincode::{Decode, Encode, config};
@@ -89,6 +90,15 @@ pub struct Varro {
 
     /// Total documents in the index, used for IDF calculations
     total_docs: AtomicUsize,
+
+    /// Segment compactor is the handle to the background thread that's
+    /// compacting segments when they get too big
+    #[allow(dead_code)]
+    segment_compactor: Mutex<JoinHandle<()>>,
+
+    /// Stop signal is how we kill the segment_compactor for Drop
+    #[allow(dead_code)]
+    stop: Arc<Mutex<bool>>,
 }
 
 impl Varro {
@@ -108,11 +118,23 @@ impl Varro {
         let total_docs = read_dir(documents_path.clone())?;
         let total_docs = total_docs.count();
         info!("Initializing with {total_docs} docs in the index.");
+
+        // Setup the segment compactor thread
+        let stop = Arc::new(Mutex::new(false));
+        let stop_for_sgement_compactor = stop.clone();
+        let segment_compactor = Mutex::new(thread::spawn(move || {
+            while !*stop_for_sgement_compactor.clone().lock().unwrap() {
+                info!("Here in the segment compaction thread!");
+                thread::sleep(Duration::from_secs(10));
+            }
+        }));
         let varro = Varro {
             index_path: path.to_path_buf(),
             documents_path: documents_path.clone(),
             buffer: Mutex::new(Vec::new()),
             total_docs: AtomicUsize::new(total_docs),
+            stop,
+            segment_compactor,
         };
         Ok(varro)
     }
