@@ -95,23 +95,24 @@ impl Varro {
     /// Contruct a new instance of Varro
     pub fn new(path: &Path) -> Result<Varro> {
         let documents_path = path.join("documents");
-        // TODO actually count the docs in the index
-        let docs_in_index: Vec<String> = Vec::new();
-        let total_docs = docs_in_index.len();
-
-        let varro = Varro {
-            index_path: path.to_path_buf(),
-            documents_path: documents_path.clone(),
-            buffer: Mutex::new(Vec::new()),
-            total_docs: AtomicUsize::new(total_docs),
-        };
         match path.exists() {
             true => info!("Index dir exists"),
             false => create_dir(path)?,
         };
         match documents_path.exists() {
             true => info!("Documents subdir dir exists"),
-            false => create_dir(documents_path)?,
+            false => create_dir(documents_path.clone())?,
+        };
+
+        // For now we can be dumb and literally just count the files in the document_path
+        let total_docs = read_dir(documents_path.clone())?;
+        let total_docs = total_docs.count();
+        info!("Initializing with {total_docs} docs in the index.");
+        let varro = Varro {
+            index_path: path.to_path_buf(),
+            documents_path: documents_path.clone(),
+            buffer: Mutex::new(Vec::new()),
+            total_docs: AtomicUsize::new(total_docs),
         };
         Ok(varro)
     }
