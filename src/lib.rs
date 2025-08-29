@@ -8,7 +8,7 @@ use std::thread::{self, JoinHandle};
 
 use anyhow::{Error, Result};
 use bincode::{Decode, Encode, config};
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use std::hash::{Hash, Hasher};
 use uuid::Uuid;
 
@@ -95,23 +95,24 @@ impl Varro {
     /// Contruct a new instance of Varro
     pub fn new(path: &Path) -> Result<Varro> {
         let documents_path = path.join("documents");
-        // TODO actually count the docs in the index
-        let docs_in_index: Vec<String> = Vec::new();
-        let total_docs = docs_in_index.len();
-
-        let varro = Varro {
-            index_path: path.to_path_buf(),
-            documents_path: documents_path.clone(),
-            buffer: Mutex::new(Vec::new()),
-            total_docs: AtomicUsize::new(total_docs),
-        };
         match path.exists() {
             true => info!("Index dir exists"),
             false => create_dir(path)?,
         };
         match documents_path.exists() {
             true => info!("Documents subdir dir exists"),
-            false => create_dir(documents_path)?,
+            false => create_dir(documents_path.clone())?,
+        };
+
+        // For now we can be dumb and literally just count the files in the document_path
+        let total_docs = read_dir(documents_path.clone())?;
+        let total_docs = total_docs.count();
+        info!("Initializing with {total_docs} docs in the index.");
+        let varro = Varro {
+            index_path: path.to_path_buf(),
+            documents_path: documents_path.clone(),
+            buffer: Mutex::new(Vec::new()),
+            total_docs: AtomicUsize::new(total_docs),
         };
         Ok(varro)
     }
@@ -185,14 +186,17 @@ impl Varro {
             }
         }
 
-        // Collect any doc where any token in the query exist, of tfidf/scoring yet
-
+        // Collect any doc where any token in the query exist and caluclate the tfidf
         let mut matching_docs: HashSet<DocumentScore> = HashSet::new();
+        debug!("Total docs in index: {}", self.total_docs.load(SeqCst));
         for token in tokens {
             if let Some(tfdf) = master_segment.term_index.get(&token) {
+                let docs_with_term = tfdf.term_freq.len();
+                debug!("Total docs for term {token}: {docs_with_term}");
                 tfdf.term_freq.iter().for_each(|(doc_id, tf)| {
-                    // TODO a real IDF
-                    let tfidf = tf * 0.5;
+                    let idf =
+                        (self.total_docs.load(SeqCst) as f64 / docs_with_term as f64).log(10.0);
+                    let tfidf = tf * idf;
                     matching_docs.insert(DocumentScore {
                         document_id: doc_id.to_string(),
                         score: tfidf,
