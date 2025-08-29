@@ -11,3 +11,5 @@ uuid = { version = "1.17.0", features = ["v4"] }
 
 [dev-dependencies]
 env_logger = "0.11.8"
+actix-web = "4"
+serde = { version = "1.0.219", features = ["derive"] }
