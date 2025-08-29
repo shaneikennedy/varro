@@ -8,7 +8,7 @@ use std::thread::{self, JoinHandle};
 
 use anyhow::{Error, Result};
 use bincode::{Decode, Encode, config};
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use std::hash::{Hash, Hasher};
 use uuid::Uuid;
 
@@ -186,14 +186,17 @@ impl Varro {
             }
         }
 
-        // Collect any doc where any token in the query exist, of tfidf/scoring yet
-
+        // Collect any doc where any token in the query exist and caluclate the tfidf
         let mut matching_docs: HashSet<DocumentScore> = HashSet::new();
+        debug!("Total docs in index: {}", self.total_docs.load(SeqCst));
         for token in tokens {
             if let Some(tfdf) = master_segment.term_index.get(&token) {
+                let docs_with_term = tfdf.term_freq.len();
+                debug!("Total docs for term {token}: {docs_with_term}");
                 tfdf.term_freq.iter().for_each(|(doc_id, tf)| {
-                    // TODO a real IDF
-                    let tfidf = tf * 0.5;
+                    let idf =
+                        (self.total_docs.load(SeqCst) as f64 / docs_with_term as f64).log(10.0);
+                    let tfidf = tf * idf;
                     matching_docs.insert(DocumentScore {
                         document_id: doc_id.to_string(),
                         score: tfidf,
