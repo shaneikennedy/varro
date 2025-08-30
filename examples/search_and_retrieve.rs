@@ -1,13 +1,16 @@
 use std::path::Path;
 
 use anyhow::Result;
-use log::{LevelFilter, error, info};
+use log::{LevelFilter, error, info, warn};
 use varro::Varro;
 
 fn main() -> Result<()> {
     env_logger::builder().filter_level(LevelFilter::Info).init();
 
     let search_engine = Varro::new(Path::new("./.index"))?;
+    if search_engine.index_size() == 0 {
+        warn!("There are no documents in the index, try running the ingest exmaple first");
+    }
     let res = search_engine.search("git and commit".into());
     for doc_score in res {
         info!(
