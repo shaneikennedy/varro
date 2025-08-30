@@ -1,5 +1,5 @@
 use actix_web::{App, HttpServer, Responder, Result, get, web};
-use log::{LevelFilter, info};
+use log::{LevelFilter, info, warn};
 use serde::{Deserialize, Serialize};
 use std::{cmp::Ordering, fs, path::Path, sync::Arc};
 use varro::Varro;
@@ -61,6 +61,10 @@ async fn main() -> std::io::Result<()> {
         }
     }
     let search_engine = Arc::new(varro::Varro::new(Path::new("./.index")).unwrap());
+
+    if search_engine.index_size() == 0 {
+        warn!("There are no documents in the index, try running the ingest exmaple first");
+    }
 
     HttpServer::new(move || {
         App::new()

@@ -139,6 +139,10 @@ impl Varro {
         Ok(varro)
     }
 
+    pub fn index_size(&self) -> usize {
+        self.total_docs.load(SeqCst)
+    }
+
     pub fn index_path(&self) -> &Path {
         self.index_path.as_path()
     }
