@@ -31,10 +31,10 @@ impl Field {
 }
 
 type SegmentId = String;
-
+type SegmentSize = usize;
 #[derive(Encode, Decode)]
 pub struct Manifest {
-    segments: HashSet<SegmentId>,
+    segments: HashMap<SegmentId, SegmentSize>,
 }
 
 /// The model representing a document that has been indexed by Varro
@@ -151,7 +151,7 @@ impl Varro {
             Err(_) => {
                 warn!("No manifest file found, starting a new one.");
                 Manifest {
-                    segments: HashSet::new(),
+                    segments: HashMap::new(),
                 }
             }
         };
@@ -207,7 +207,7 @@ impl Varro {
         let segment_files = &self.manifest.read().unwrap().segments;
         let mut master_segment = Segment::new();
 	debug!("Searching through segment files: {:#?}", segment_files);
-        for f in segment_files {
+        for (f, _) in segment_files {
 	    let segment_file = format!("{f}.seg");
             let segment_path = self.index_path.join(&segment_file);
             let contents = read(&segment_path);
@@ -290,26 +290,32 @@ impl Varro {
             // TODO: this wraps around on overflow
             self.total_docs.fetch_add(1, SeqCst);
         }
-        let segment_id = self.write_segment(&segment)?;
+        let (segment_id, segment_size) = self.write_segment(&segment)?;
 
         // Update the manifest file
+        debug!("Start update manifest file");
         let mut manifest_guard = self.manifest.write().unwrap();
-        manifest_guard.segments.insert(segment_id.clone());
-	debug!("Manifest object now contains segments: {:#?}", manifest_guard.segments);
+        manifest_guard
+            .segments
+            .insert(segment_id.clone(), segment_size);
+        debug!(
+            "Manifest object now contains segments: {:#?}",
+            manifest_guard.segments
+        );
         let config = config::standard();
-	drop(manifest_guard);
-	let manifest_guard = self.manifest.read().unwrap();
+        drop(manifest_guard);
+        let manifest_guard = self.manifest.read().unwrap();
         let bytes = bincode::encode_to_vec(&*manifest_guard, config)?;
         write(self.index_path().join("manifest.varro"), bytes)?;
         Ok(())
     }
 
-    fn write_segment(&self, seg: &Segment) -> Result<SegmentId> {
+    fn write_segment(&self, seg: &Segment) -> Result<(SegmentId, usize)> {
         let config = config::standard();
         let bytes = bincode::encode_to_vec(seg, config)?;
         let segment_id = Uuid::new_v4().to_string();
-        write(self.index_path().join(segment_id.clone() + ".seg"), bytes)?;
-        Ok(segment_id)
+        write(self.index_path().join(segment_id.clone() + ".seg"), &bytes)?;
+        Ok((segment_id, bytes.len()))
     }
 }
 
