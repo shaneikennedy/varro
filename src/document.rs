@@ -1,0 +1,72 @@
+use std::collections::HashSet;
+use std::hash::{Hash, Hasher};
+
+use bincode::{Decode, Encode};
+use uuid::Uuid;
+
+/// The model representing a field in a document
+#[derive(PartialEq, Eq, Hash, Encode, Decode)]
+pub struct Field {
+    name: String,
+    contents: String,
+    index: bool,
+}
+
+impl Field {
+    pub fn name(&self) -> String {
+        self.name.clone()
+    }
+    pub fn contents(&self) -> String {
+        self.contents.clone()
+    }
+}
+
+/// The model representing a document that has been indexed by Varro
+#[derive(PartialEq, Eq, Encode, Decode)]
+pub struct Document {
+    id: String,
+
+    /// The fields map of the document e.g "name": "Intro to git", "content": "1000 words...", and whether or not to store and index that field
+    fields: HashSet<Field>,
+}
+
+impl Default for Document {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Hash for Document {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+
+impl Document {
+    pub fn new() -> Document {
+        Document {
+            id: Uuid::new_v4().to_string(),
+            fields: HashSet::new(),
+        }
+    }
+
+    pub fn add_field(&mut self, name: String, contents: String, index: bool) {
+        self.fields.insert(Field {
+            name,
+            contents,
+            index,
+        });
+    }
+
+    pub fn fields(&self) -> impl Iterator<Item = &Field> {
+        self.fields.iter()
+    }
+
+    pub fn get_field(&self, name: String) -> Option<&Field> {
+        self.fields.iter().find(|&f| f.name == name)
+    }
+
+    pub fn id(&self) -> String {
+        self.id.clone()
+    }
+}
