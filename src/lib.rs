@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::fs::{create_dir, read, read_dir, write};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
@@ -83,6 +83,18 @@ impl Document {
     }
 }
 
+impl Drop for Varro {
+    fn drop(&mut self) {
+        *self.stop.lock().unwrap() = true;
+        if let Some(h) = self.segment_compactor.lock().unwrap().take() {
+            match h.join() {
+                Ok(_) => debug!("Successfully shut down the compactor thread."),
+                Err(_) => error!("Problem shutting down the compactor thread."),
+            }
+        };
+    }
+}
+
 /// The model for indexing, querying and retrieveing documents
 pub struct Varro {
     /// Where on the filesystem to store files and their indexes
@@ -101,7 +113,7 @@ pub struct Varro {
     /// Segment compactor is the handle to the background thread that's
     /// compacting segments when they get too big
     #[allow(dead_code)]
-    segment_compactor: Mutex<JoinHandle<()>>,
+    segment_compactor: Mutex<Option<JoinHandle<()>>>,
 
     /// Stop signal is how we kill the segment_compactor for Drop
     #[allow(dead_code)]
@@ -117,20 +129,20 @@ impl Varro {
         let documents_path = path.join("documents");
         match path.exists() {
             true => info!("Index dir exists"),
-            false => create_dir(path)?,
+            false => fs::create_dir(path)?,
         };
         match documents_path.exists() {
             true => info!("Documents subdir dir exists"),
-            false => create_dir(documents_path.clone())?,
+            false => fs::create_dir(documents_path.clone())?,
         };
 
         // For now we can be dumb and literally just count the files in the document_path
-        let total_docs = read_dir(documents_path.clone())?;
+        let total_docs = fs::read_dir(documents_path.clone())?;
         let total_docs = total_docs.count();
         info!("Initializing with {total_docs} docs in the index.");
 
         // Read manifest file into memory if there is one.
-        let contents = read(path.join("manifest.varro"));
+        let contents = fs::read(path.join("manifest.varro"));
         let manifest = match contents {
             Ok(c) => {
                 let config = config::standard();
@@ -152,10 +164,10 @@ impl Varro {
         let stop_for_sgement_compactor = stop.clone();
         let manifest_for_compaction = manifest.clone();
         let index_path_for_compaction = path.to_path_buf();
-        let segment_compactor = Mutex::new(thread::spawn(move || {
+        let segment_compactor = Mutex::new(Some(thread::spawn(move || {
             while !*stop_for_sgement_compactor.clone().lock().unwrap() {
                 let segments_guard = manifest_for_compaction.read().unwrap();
-                debug!("Determine whate segments to merge");
+                debug!("Determine whate segments to compact");
                 let segments_to_merge = segments_guard.segments.clone();
                 drop(segments_guard);
                 let segments_to_merge = segments_to_merge
@@ -168,7 +180,7 @@ impl Varro {
                     for (seg_id, _) in segments_to_merge.clone() {
                         let segment_file = format!("{seg_id}.seg");
                         let segment_path = index_path_for_compaction.join(&segment_file);
-                        let contents = read(&segment_path);
+                        let contents = fs::read(&segment_path);
                         let segment = match contents {
                             Ok(c) => {
                                 let config = config::standard();
@@ -187,7 +199,7 @@ impl Varro {
                     let config = config::standard();
                     let bytes = bincode::encode_to_vec(merged_segment, config).unwrap();
                     let segment_id = Uuid::new_v4().to_string();
-                    let res = write(
+                    let res = fs::write(
                         index_path_for_compaction.join(segment_id.clone() + ".seg"),
                         &bytes,
                     );
@@ -199,7 +211,7 @@ impl Varro {
                     // update manifest to add new merge segment AND remove merged segments
                     let mut manifest_guard = manifest_for_compaction.write().unwrap();
                     manifest_guard.segments.insert(segment_id, bytes.len());
-                    for (seg_id, _) in segments_to_merge {
+                    for (seg_id, _) in segments_to_merge.clone() {
                         manifest_guard.segments.remove(seg_id);
                     }
                     drop(manifest_guard);
@@ -207,16 +219,29 @@ impl Varro {
                     // write the new manifest file
                     let manifest_guard = manifest_for_compaction.read().unwrap();
                     let bytes = bincode::encode_to_vec(&*manifest_guard, config).unwrap();
-                    let res = write(index_path_for_compaction.join("manifest.varro"), bytes);
+                    let res = fs::write(index_path_for_compaction.join("manifest.varro"), bytes);
                     match res {
                         Ok(_) => debug!("Successfully wrote new manifest"),
                         Err(_) => error!("Unable to write new manifest"),
                     };
                     drop(manifest_guard);
+
+                    // Cleanup merged segments
+                    for (seg_id, _) in segments_to_merge {
+                        let res = fs::remove_file(
+                            index_path_for_compaction.join(format!("{seg_id}.seg")),
+                        );
+                        match res {
+                            Ok(_) => debug!("Deleted {seg_id}.seg after compaction"),
+                            Err(_) => error!("Problem deleting {seg_id}.seg after compaction"),
+                        }
+                    }
+                } else {
+                    debug!("No candidate segments for compaction.");
                 }
-                thread::sleep(Duration::from_secs(10));
+                thread::sleep(Duration::from_secs(2));
             }
-        }));
+        })));
 
         let varro = Varro {
             index_path: path.to_path_buf(),
@@ -256,7 +281,7 @@ impl Varro {
         let p = self.documents_path.join(id.clone());
         let config = config::standard();
         let bytes = bincode::encode_to_vec(doc, config)?;
-        Ok(write(p, bytes)?)
+        Ok(fs::write(p, bytes)?)
     }
 
     /// Text search, given an input string query the index and return a list of Document Ids
@@ -272,7 +297,7 @@ impl Varro {
         for f in segment_files.keys() {
             let segment_file = format!("{f}.seg");
             let segment_path = self.index_path.join(&segment_file);
-            let contents = read(&segment_path);
+            let contents = fs::read(&segment_path);
             let segment = match contents {
                 Ok(c) => {
                     let config = config::standard();
@@ -315,7 +340,7 @@ impl Varro {
 
     /// Retrive a document by it's Document.id, returns an Option type wrapping a Document
     pub fn retrieve(&self, id: String) -> Option<Document> {
-        let file = read(self.documents_path.join(id.clone()));
+        let file = fs::read(self.documents_path.join(id.clone()));
         match file {
             Ok(f) => {
                 let config = config::standard();
@@ -359,7 +384,7 @@ impl Varro {
         drop(manifest_guard);
         let manifest_guard = self.manifest.read().unwrap();
         let bytes = bincode::encode_to_vec(&*manifest_guard, config)?;
-        write(self.index_path().join("manifest.varro"), bytes)?;
+        fs::write(self.index_path().join("manifest.varro"), bytes)?;
         Ok(())
     }
 
@@ -367,7 +392,7 @@ impl Varro {
         let config = config::standard();
         let bytes = bincode::encode_to_vec(seg, config)?;
         let segment_id = Uuid::new_v4().to_string();
-        write(self.index_path().join(segment_id.clone() + ".seg"), &bytes)?;
+        fs::write(self.index_path().join(segment_id.clone() + ".seg"), &bytes)?;
         Ok((segment_id, bytes.len()))
     }
 }
