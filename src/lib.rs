@@ -8,7 +8,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use anyhow::{Error, Result};
-use bincode::{Decode, Encode, config};
+use bincode::{config, Decode, Encode};
 use log::{debug, error, info, warn};
 use std::hash::{Hash, Hasher};
 use uuid::Uuid;
@@ -83,6 +83,18 @@ impl Document {
     }
 }
 
+impl Drop for Varro {
+    fn drop(&mut self) {
+        *self.stop.lock().unwrap() = true;
+        if let Some(h) = self.segment_compactor.lock().unwrap().take() {
+	    match h.join() {
+		Ok(_) => debug!("Successfully shut down the compactor thread."),
+		Err(_) => error!("Problem shutting down the compactor thread."),
+	    }
+	};
+    }
+}
+
 /// The model for indexing, querying and retrieveing documents
 pub struct Varro {
     /// Where on the filesystem to store files and their indexes
@@ -101,7 +113,7 @@ pub struct Varro {
     /// Segment compactor is the handle to the background thread that's
     /// compacting segments when they get too big
     #[allow(dead_code)]
-    segment_compactor: Mutex<JoinHandle<()>>,
+    segment_compactor: Mutex<Option<JoinHandle<()>>>,
 
     /// Stop signal is how we kill the segment_compactor for Drop
     #[allow(dead_code)]
@@ -152,7 +164,7 @@ impl Varro {
         let stop_for_sgement_compactor = stop.clone();
         let manifest_for_compaction = manifest.clone();
         let index_path_for_compaction = path.to_path_buf();
-        let segment_compactor = Mutex::new(thread::spawn(move || {
+        let segment_compactor = Mutex::new(Some(thread::spawn(move || {
             while !*stop_for_sgement_compactor.clone().lock().unwrap() {
                 let segments_guard = manifest_for_compaction.read().unwrap();
                 debug!("Determine whate segments to compact");
@@ -228,7 +240,7 @@ impl Varro {
                 }
                 thread::sleep(Duration::from_secs(10));
             }
-        }));
+        })));
 
         let varro = Varro {
             index_path: path.to_path_buf(),
