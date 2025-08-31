@@ -238,7 +238,7 @@ impl Varro {
                 } else {
                     debug!("No candidate segments for compaction.");
                 }
-                thread::sleep(Duration::from_secs(10));
+                thread::sleep(Duration::from_secs(2));
             }
         })));
 
