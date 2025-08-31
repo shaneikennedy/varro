@@ -98,7 +98,6 @@ impl Drop for Varro {
 /// The model for indexing, querying and retrieveing documents
 pub struct Varro {
     /// Where on the filesystem to store files and their indexes
-    #[allow(dead_code)]
     index_path: PathBuf,
 
     /// Where the full document objects are actually stored
@@ -112,15 +111,22 @@ pub struct Varro {
 
     /// Segment compactor is the handle to the background thread that's
     /// compacting segments when they get too big
-    #[allow(dead_code)]
     segment_compactor: Mutex<Option<JoinHandle<()>>>,
 
     /// Stop signal is how we kill the segment_compactor for Drop
-    #[allow(dead_code)]
     stop: Arc<Mutex<bool>>,
 
     /// Manifest file representation
     manifest: Arc<RwLock<Manifest>>,
+
+    /// How often to run segment compaction, defaults to 2 seconds.
+    compaction_freq: Arc<Mutex<Duration>>,
+
+    /// Minimum segment size is used to determine when a file should be compacted.
+    /// Segments are read into memory when searching, using lots of small segment files is worse
+    /// for performance but better when memory is constrained. Larger segments are better for performance
+    /// but cause spikes in memory on searches. Default is 64MB.
+    min_segment_size: Arc<Mutex<usize>>,
 }
 
 impl Varro {
@@ -159,20 +165,28 @@ impl Varro {
             }
         };
 
+        let min_segment_size = Arc::new(Mutex::new(64000000));
+
         // Setup the segment compactor thread
         let stop = Arc::new(Mutex::new(false));
         let stop_for_sgement_compactor = stop.clone();
         let manifest_for_compaction = manifest.clone();
         let index_path_for_compaction = path.to_path_buf();
+        let compaction_freq = Arc::new(Mutex::new(Duration::from_secs(2)));
+        let compaction_freq_for_compaction = compaction_freq.clone();
+        let min_segment_size_for_compaction = min_segment_size.clone();
         let segment_compactor = Mutex::new(Some(thread::spawn(move || {
             while !*stop_for_sgement_compactor.clone().lock().unwrap() {
                 let segments_guard = manifest_for_compaction.read().unwrap();
                 debug!("Determine whate segments to compact");
                 let segments_to_merge = segments_guard.segments.clone();
                 drop(segments_guard);
+                let min_size_guard = min_segment_size_for_compaction.lock().unwrap();
+                let min_segment_size = *min_size_guard;
+                drop(min_size_guard);
                 let segments_to_merge = segments_to_merge
                     .iter()
-                    .filter(|&(_, &size)| size <= 1000000)
+                    .filter(|&(_, &size)| size <= min_segment_size)
                     .clone();
                 let mut merged_segment = Segment::new();
                 if segments_to_merge.clone().count() > 1 {
@@ -239,7 +253,10 @@ impl Varro {
                 } else {
                     debug!("No candidate segments for compaction.");
                 }
-                thread::sleep(Duration::from_secs(2));
+                let sleep_guard = compaction_freq_for_compaction.lock().unwrap();
+                let sleep = *sleep_guard;
+                drop(sleep_guard);
+                thread::sleep(sleep);
             }
         })));
 
@@ -251,14 +268,30 @@ impl Varro {
             stop,
             segment_compactor,
             manifest,
+            compaction_freq,
+            min_segment_size,
         };
         Ok(varro)
     }
 
+    /// Updates the Varro instance with a new `min_segment_size`
+    pub fn with_min_segment_size(self, size: usize) -> Self {
+        *self.min_segment_size.lock().unwrap() = size;
+        self
+    }
+
+    /// Update the Varro instance with a new `compaction_frequency`
+    pub fn with_compaction_frequency(self, duration: Duration) -> Self {
+        *self.compaction_freq.lock().unwrap() = duration;
+        self
+    }
+
+    /// The total number of docs in the Varro index
     pub fn index_size(&self) -> usize {
         self.total_docs.load(SeqCst)
     }
 
+    /// The current configured path for Varro to store it's index files
     pub fn index_path(&self) -> &Path {
         self.index_path.as_path()
     }
@@ -272,6 +305,9 @@ impl Varro {
         let mut docs = self.buffer.lock().unwrap();
         let handle = thread::spawn(move || DocumentSegment::new(&doc));
         docs.push(handle);
+
+        // TODO automatically flush if the buffer hits a certain size, which is configurable
+
         Ok(())
     }
 
@@ -399,7 +435,6 @@ impl Varro {
 
 pub struct DocumentScore {
     pub document_id: String,
-    #[allow(dead_code)]
     pub score: f64,
 }
 
@@ -493,7 +528,6 @@ impl Tfdf {
 
 #[derive(Debug)]
 struct DocumentSegment {
-    #[allow(dead_code)]
     document_id: String,
     // Total number of words in the doc
     document_length: i32,
