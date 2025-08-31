@@ -224,16 +224,7 @@ impl Varro {
             // Merge the segments
             match segment {
                 Some(s) => {
-                    for (term, tfdf) in s.term_index {
-                        master_segment
-                            .term_index
-                            .entry(term)
-                            .and_modify(|t| {
-                                t.doc_freq += tfdf.doc_freq;
-                                t.term_freq.extend(tfdf.term_freq.clone());
-                            })
-                            .or_insert(tfdf);
-                    }
+                    master_segment.add_segment(s);
                 }
                 None => warn!("Unable to read segment file {:#?}", segment_path),
             }
@@ -368,6 +359,19 @@ impl Segment {
             }
         }
     }
+
+    // Used during segment compaction
+    fn add_segment(&mut self, seg: Segment) {
+        for (term, tfdf) in seg.term_index {
+            self.term_index
+                .entry(term)
+                .and_modify(|t| {
+                    t.doc_freq += tfdf.doc_freq;
+                    t.term_freq.extend(tfdf.term_freq.clone());
+                })
+                .or_insert(tfdf);
+        }
+    }
 }
 
 /// A TFDF is holds the info for which documents (id, the String in the term_freq map) have a given term and it's count (the i32 in the term_freq map)
@@ -480,5 +484,50 @@ mod tokenize_tests {
         let contents = "For once and for all".to_string();
         let tokens: Vec<String> = tokenize(&contents).collect();
         assert_eq!(vec!["once", "all"], tokens);
+    }
+}
+
+#[cfg(test)]
+mod segment_tests {
+    use super::*;
+
+    #[test]
+    fn test_add_document_segment() {
+        let mut segment = Segment::new();
+        let mut doc1 = Document::new();
+        doc1.add_field(
+            "content".into(),
+            "mes deux chats chili och arnie".into(),
+            false,
+        );
+        let doc_seg_1 = DocumentSegment::new(&doc1);
+        segment.add_docucment_segment(&doc_seg_1);
+
+        assert!(segment.term_index.contains_key("deux"));
+        let tfdf = segment.term_index.get("deux").unwrap();
+        assert_eq!(tfdf.term, "deux");
+        assert_eq!(tfdf.term_freq.len(), 1);
+        assert!(tfdf.term_freq.iter().any(|(doc_id, _)| doc_id == &doc1.id));
+    }
+
+    #[test]
+    fn test_add_segment() {
+        let mut segment = Segment::new();
+        let mut tfdf = Tfdf::new("deux");
+        tfdf.term_freq.push(("doc1".into(), 0.43));
+        segment.term_index.insert("deux".into(), tfdf);
+
+        let mut segment_to_merge = Segment::new();
+        let mut tfdf = Tfdf::new("deux");
+        tfdf.term_freq.push(("doc2".into(), 0.43));
+        segment_to_merge.term_index.insert("deux".into(), tfdf);
+        let mut tfdf = Tfdf::new("coucou");
+        tfdf.term_freq.push(("doc2".into(), 0.43));
+        segment_to_merge.term_index.insert("coucou".into(), tfdf);
+        segment.add_segment(segment_to_merge);
+
+        assert!(segment.term_index.contains_key("deux"));
+        assert!(segment.term_index.contains_key("coucou"));
+        assert_eq!(segment.term_index.get("deux").unwrap().term_freq.len(), 2);
     }
 }
