@@ -8,92 +8,22 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use anyhow::{Error, Result};
-use bincode::{Decode, Encode, config};
+use bincode::config;
 use log::{debug, error, info, warn};
 use std::hash::{Hash, Hasher};
 use uuid::Uuid;
 
-/// The model representing a field in a document
-#[derive(PartialEq, Eq, Hash, Encode, Decode)]
-pub struct Field {
-    name: String,
-    contents: String,
-    index: bool,
-}
+mod compaction;
+pub mod document;
+mod manifest;
+mod segment;
+mod tokens;
 
-impl Field {
-    pub fn name(&self) -> String {
-        self.name.clone()
-    }
-    pub fn contents(&self) -> String {
-        self.contents.clone()
-    }
-}
+pub use document::{Document, Field};
 
-type SegmentId = String;
-type SegmentSize = usize;
-#[derive(Encode, Decode, Debug)]
-pub struct Manifest {
-    segments: HashMap<SegmentId, SegmentSize>,
-}
-
-/// The model representing a document that has been indexed by Varro
-#[derive(PartialEq, Eq, Encode, Decode)]
-pub struct Document {
-    id: String,
-
-    /// The fields map of the document e.g "name": "Intro to git", "content": "1000 words...", and whether or not to store and index that field
-    fields: HashSet<Field>,
-}
-
-impl Default for Document {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Hash for Document {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
-    }
-}
-
-impl Document {
-    pub fn new() -> Document {
-        Document {
-            id: Uuid::new_v4().to_string(),
-            fields: HashSet::new(),
-        }
-    }
-
-    pub fn add_field(&mut self, name: String, contents: String, index: bool) {
-        self.fields.insert(Field {
-            name,
-            contents,
-            index,
-        });
-    }
-
-    pub fn get_field(&self, name: String) -> Option<&Field> {
-        self.fields.iter().find(|&f| f.name == name)
-    }
-
-    pub fn id(&self) -> String {
-        self.id.clone()
-    }
-}
-
-impl Drop for Varro {
-    fn drop(&mut self) {
-        *self.stop.lock().unwrap() = true;
-        if let Some(h) = self.segment_compactor.lock().unwrap().take() {
-            match h.join() {
-                Ok(_) => debug!("Successfully shut down the compactor thread."),
-                Err(_) => error!("Problem shutting down the compactor thread."),
-            }
-        };
-    }
-}
+use crate::compaction::SegmentCompactor;
+use crate::manifest::{Manifest, SegmentId};
+use crate::segment::{DocumentSegment, Segment};
 
 /// The model for indexing, querying and retrieveing documents
 pub struct Varro {
@@ -111,7 +41,7 @@ pub struct Varro {
 
     /// Segment compactor is the handle to the background thread that's
     /// compacting segments when they get too big
-    segment_compactor: Mutex<Option<JoinHandle<()>>>,
+    segment_compactor: Mutex<Option<JoinHandle<Result<()>>>>,
 
     /// Stop signal is how we kill the segment_compactor for Drop
     stop: Arc<Mutex<bool>>,
@@ -152,14 +82,14 @@ impl Varro {
         let manifest = match contents {
             Ok(c) => {
                 let config = config::standard();
-                let (decoded, _): (Manifest, usize) =
+                let (decoded, _): (manifest::Manifest, usize) =
                     bincode::decode_from_slice(&c[..], config).unwrap();
                 debug!("Manifest found on init: {:#?}", decoded);
                 Arc::new(RwLock::new(decoded))
             }
             Err(_) => {
                 warn!("No manifest file found, starting a new one.");
-                Arc::new(RwLock::new(Manifest {
+                Arc::new(RwLock::new(manifest::Manifest {
                     segments: HashMap::new(),
                 }))
             }
@@ -169,96 +99,15 @@ impl Varro {
 
         // Setup the segment compactor thread
         let stop = Arc::new(Mutex::new(false));
-        let stop_for_sgement_compactor = stop.clone();
-        let manifest_for_compaction = manifest.clone();
-        let index_path_for_compaction = path.to_path_buf();
         let compaction_freq = Arc::new(Mutex::new(Duration::from_secs(2)));
-        let compaction_freq_for_compaction = compaction_freq.clone();
-        let min_segment_size_for_compaction = min_segment_size.clone();
-        let segment_compactor = Mutex::new(Some(thread::spawn(move || {
-            while !*stop_for_sgement_compactor.clone().lock().unwrap() {
-                let segments_guard = manifest_for_compaction.read().unwrap();
-                debug!("Determine whate segments to compact");
-                let segments_to_merge = segments_guard.segments.clone();
-                drop(segments_guard);
-                let min_size_guard = min_segment_size_for_compaction.lock().unwrap();
-                let min_segment_size = *min_size_guard;
-                drop(min_size_guard);
-                let segments_to_merge = segments_to_merge
-                    .iter()
-                    .filter(|&(_, &size)| size <= min_segment_size)
-                    .clone();
-                let mut merged_segment = Segment::new();
-                if segments_to_merge.clone().count() > 1 {
-                    // Merge all small segments
-                    for (seg_id, _) in segments_to_merge.clone() {
-                        let segment_file = format!("{seg_id}.seg");
-                        let segment_path = index_path_for_compaction.join(&segment_file);
-                        let contents = fs::read(&segment_path);
-                        let segment = match contents {
-                            Ok(c) => {
-                                let config = config::standard();
-                                let (decoded, _): (Segment, usize) =
-                                    bincode::decode_from_slice(&c[..], config).unwrap();
-                                Some(decoded)
-                            }
-                            Err(_) => None,
-                        };
-                        match segment {
-                            Some(s) => merged_segment.add_segment(s),
-                            None => todo!(),
-                        }
-                    }
-                    // write new merged segment
-                    let config = config::standard();
-                    let bytes = bincode::encode_to_vec(merged_segment, config).unwrap();
-                    let segment_id = Uuid::new_v4().to_string();
-                    let res = fs::write(
-                        index_path_for_compaction.join(segment_id.clone() + ".seg"),
-                        &bytes,
-                    );
-                    match res {
-                        Ok(_) => debug!("Successfully wrote new compacted segment {segment_id}"),
-                        Err(_) => error!("Problem writing compacted segment"),
-                    }
-
-                    // update manifest to add new merge segment AND remove merged segments
-                    let mut manifest_guard = manifest_for_compaction.write().unwrap();
-                    manifest_guard.segments.insert(segment_id, bytes.len());
-                    for (seg_id, _) in segments_to_merge.clone() {
-                        manifest_guard.segments.remove(seg_id);
-                    }
-                    drop(manifest_guard);
-
-                    // write the new manifest file
-                    let manifest_guard = manifest_for_compaction.read().unwrap();
-                    let bytes = bincode::encode_to_vec(&*manifest_guard, config).unwrap();
-                    let res = fs::write(index_path_for_compaction.join("manifest.varro"), bytes);
-                    match res {
-                        Ok(_) => debug!("Successfully wrote new manifest"),
-                        Err(_) => error!("Unable to write new manifest"),
-                    };
-                    drop(manifest_guard);
-
-                    // Cleanup merged segments
-                    for (seg_id, _) in segments_to_merge {
-                        let res = fs::remove_file(
-                            index_path_for_compaction.join(format!("{seg_id}.seg")),
-                        );
-                        match res {
-                            Ok(_) => debug!("Deleted {seg_id}.seg after compaction"),
-                            Err(_) => error!("Problem deleting {seg_id}.seg after compaction"),
-                        }
-                    }
-                } else {
-                    debug!("No candidate segments for compaction.");
-                }
-                let sleep_guard = compaction_freq_for_compaction.lock().unwrap();
-                let sleep = *sleep_guard;
-                drop(sleep_guard);
-                thread::sleep(sleep);
-            }
-        })));
+        let segment_compactor = SegmentCompactor::new(
+            stop.clone(),
+            manifest.clone(),
+            path.to_path_buf(),
+            min_segment_size.clone(),
+            compaction_freq.clone(),
+        );
+        let segment_compactor = Mutex::new(Some(thread::spawn(move || segment_compactor.run())));
 
         let varro = Varro {
             index_path: path.to_path_buf(),
@@ -297,13 +146,13 @@ impl Varro {
     }
 
     /// Index a document, this takes a Document, stores it, adds the index to the document buffer, and returns whether it was successfull or not
-    pub fn index(&self, doc: Document) -> Result<()> {
+    pub fn index(&self, doc: document::Document) -> Result<()> {
         // First things first get this thing written to disk
         self.write_doc(&doc)?;
 
         // Then add it to the varro buffer to be indexed
         let mut docs = self.buffer.lock().unwrap();
-        let handle = thread::spawn(move || DocumentSegment::new(&doc));
+        let handle = thread::spawn(move || segment::DocumentSegment::new(&doc));
         docs.push(handle);
 
         // TODO automatically flush if the buffer hits a certain size, which is configurable
@@ -312,8 +161,8 @@ impl Varro {
     }
 
     /// Write a Document to the documents_path for durability and retrieval
-    fn write_doc(&self, doc: &Document) -> Result<()> {
-        let id = doc.id.clone();
+    fn write_doc(&self, doc: &document::Document) -> Result<()> {
+        let id = doc.id().clone();
         let p = self.documents_path.join(id.clone());
         let config = config::standard();
         let bytes = bincode::encode_to_vec(doc, config)?;
@@ -324,7 +173,7 @@ impl Varro {
     /// and their corresponding TDIDF score (higher is better) that match the search
     pub fn search(&self, query: String) -> impl Iterator<Item = DocumentScore> {
         info!("Searching for {query}");
-        let tokens = tokenize(query.as_str());
+        let tokens = tokens::tokenize(query.as_str());
 
         // Get all the segment files and load them into memory, merging them all into a master segment
         let segment_files = &self.manifest.read().unwrap().segments;
@@ -375,12 +224,12 @@ impl Varro {
     }
 
     /// Retrive a document by it's Document.id, returns an Option type wrapping a Document
-    pub fn retrieve(&self, id: String) -> Option<Document> {
+    pub fn retrieve(&self, id: String) -> Option<document::Document> {
         let file = fs::read(self.documents_path.join(id.clone()));
         match file {
             Ok(f) => {
                 let config = config::standard();
-                let (decoded, _): (Document, usize) =
+                let (decoded, _): (document::Document, usize) =
                     bincode::decode_from_slice(&f[..], config).unwrap();
                 Some(decoded)
             }
@@ -433,6 +282,18 @@ impl Varro {
     }
 }
 
+impl Drop for Varro {
+    fn drop(&mut self) {
+        *self.stop.lock().unwrap() = true;
+        if let Some(h) = self.segment_compactor.lock().unwrap().take() {
+            match h.join() {
+                Ok(_) => debug!("Successfully shut down the compactor thread."),
+                Err(_) => error!("Problem shutting down the compactor thread."),
+            }
+        };
+    }
+}
+
 pub struct DocumentScore {
     pub document_id: String,
     pub score: f64,
@@ -449,206 +310,5 @@ impl Eq for DocumentScore {}
 impl Hash for DocumentScore {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.document_id.hash(state);
-    }
-}
-
-/// A Segment is just a map of terms to TFDFs for a given "flush".
-#[derive(Encode, Decode, Debug)]
-struct Segment {
-    term_index: HashMap<String, Tfdf>,
-}
-
-impl Segment {
-    fn new() -> Self {
-        Self {
-            term_index: HashMap::new(),
-        }
-    }
-
-    // For a segment, update the existing term_index with all
-    // the terms and corresponding TFs from DocumentSegment
-    // if the term doesn't already exist in the term index, insert a new one
-    fn add_docucment_segment(&mut self, seg: &DocumentSegment) {
-        for (term, _) in seg.terms.iter() {
-            if self.term_index.contains_key(term) {
-                self.term_index
-                    .entry(term.to_string())
-                    .and_modify(|t| t.add_for_doc(seg));
-            } else {
-                let mut tfdf = Tfdf::new(term);
-                tfdf.add_for_doc(seg);
-                self.term_index.insert(term.to_string(), tfdf);
-            }
-        }
-    }
-
-    // Used during segment compaction
-    fn add_segment(&mut self, seg: Segment) {
-        for (term, tfdf) in seg.term_index {
-            self.term_index
-                .entry(term)
-                .and_modify(|t| {
-                    t.doc_freq += tfdf.doc_freq;
-                    t.term_freq.extend(tfdf.term_freq.clone());
-                })
-                .or_insert(tfdf);
-        }
-    }
-}
-
-/// A TFDF is holds the info for which documents (id, the String in the term_freq map) have a given term and it's count (the i32 in the term_freq map)
-/// and the total number of documents that the term appears in
-#[derive(Encode, Decode, Debug)]
-struct Tfdf {
-    term: String,
-
-    // Each tuple is a document_id, and the normalized fresquency
-    // for the term in this doc, that is, # occurances / total words in the doc
-    term_freq: Vec<(String, f64)>,
-    doc_freq: i32,
-}
-
-impl Tfdf {
-    pub fn new(term: &str) -> Self {
-        Self {
-            term: term.into(),
-            term_freq: Vec::new(),
-            doc_freq: 0,
-        }
-    }
-
-    pub fn add_for_doc(&mut self, doc_seg: &DocumentSegment) {
-        self.term_freq.push((
-            doc_seg.document_id(),
-            *doc_seg.terms.get(&self.term).unwrap() as f64 / doc_seg.document_length as f64, // Normalize the TF by the document length
-        ));
-        self.doc_freq += 1;
-    }
-}
-
-#[derive(Debug)]
-struct DocumentSegment {
-    document_id: String,
-    // Total number of words in the doc
-    document_length: i32,
-    terms: HashMap<String, i32>,
-}
-
-impl DocumentSegment {
-    pub fn new(doc: &Document) -> Self {
-        let mut doc_seg = DocumentSegment {
-            document_id: doc.id(),
-            document_length: 0,
-            terms: HashMap::new(),
-        };
-        let mut word_count = 0;
-        for field in doc.fields.iter() {
-            let content = tokenize(&field.contents);
-            content.for_each(|w| {
-                word_count += 1;
-                doc_seg.terms.entry(w).and_modify(|v| *v += 1).or_insert(1);
-            });
-        }
-        doc_seg.document_length = word_count;
-        doc_seg
-    }
-
-    pub fn document_id(&self) -> String {
-        self.document_id.clone()
-    }
-}
-
-// TODO consider phf crate for O(1) lookups if this grows or sucks
-const STOP_WORDS: [&str; 10] = ["the", "and", "is", "in", "at", "of", "to", "a", "an", "for"];
-fn tokenize(contents: &str) -> impl Iterator<Item = String> {
-    contents.split_whitespace().filter_map(|w| {
-        if !STOP_WORDS.contains(&w.to_lowercase().as_str()) {
-            Some(w.to_lowercase())
-        } else {
-            None
-        }
-    })
-}
-
-#[cfg(test)]
-mod document_segment_tests {
-    use super::*;
-
-    #[test]
-    fn test_document_segment() {
-        let mut doc = Document::new();
-        doc.add_field("name".into(), "wow such nice test".into(), true);
-        doc.add_field("body".into(), "wow such nice test again".into(), true);
-        let doc_seg = DocumentSegment::new(&doc);
-        assert_eq!(doc.id(), doc_seg.document_id);
-        assert_eq!(doc_seg.terms.get("wow"), Some(&2));
-        assert_eq!(doc_seg.terms.get("such"), Some(&2));
-        assert_eq!(doc_seg.terms.get("nice"), Some(&2));
-        assert_eq!(doc_seg.terms.get("test"), Some(&2));
-        assert_eq!(doc_seg.terms.get("again"), Some(&1));
-    }
-}
-
-#[cfg(test)]
-mod tokenize_tests {
-    use super::*;
-
-    #[test]
-    fn test_tokenize_lower_cases() {
-        let contents = "smAll sIlly kitTy Cat".to_string();
-        let tokens: Vec<String> = tokenize(&contents).collect();
-        assert_eq!(vec!["small", "silly", "kitty", "cat"], tokens);
-    }
-
-    #[test]
-    fn test_tokenize_removes_stop_words() {
-        let contents = "For once and for all".to_string();
-        let tokens: Vec<String> = tokenize(&contents).collect();
-        assert_eq!(vec!["once", "all"], tokens);
-    }
-}
-
-#[cfg(test)]
-mod segment_tests {
-    use super::*;
-
-    #[test]
-    fn test_add_document_segment() {
-        let mut segment = Segment::new();
-        let mut doc1 = Document::new();
-        doc1.add_field(
-            "content".into(),
-            "mes deux chats chili och arnie".into(),
-            false,
-        );
-        let doc_seg_1 = DocumentSegment::new(&doc1);
-        segment.add_docucment_segment(&doc_seg_1);
-
-        assert!(segment.term_index.contains_key("deux"));
-        let tfdf = segment.term_index.get("deux").unwrap();
-        assert_eq!(tfdf.term, "deux");
-        assert_eq!(tfdf.term_freq.len(), 1);
-        assert!(tfdf.term_freq.iter().any(|(doc_id, _)| doc_id == &doc1.id));
-    }
-
-    #[test]
-    fn test_add_segment() {
-        let mut segment = Segment::new();
-        let mut tfdf = Tfdf::new("deux");
-        tfdf.term_freq.push(("doc1".into(), 0.43));
-        segment.term_index.insert("deux".into(), tfdf);
-
-        let mut segment_to_merge = Segment::new();
-        let mut tfdf = Tfdf::new("deux");
-        tfdf.term_freq.push(("doc2".into(), 0.43));
-        segment_to_merge.term_index.insert("deux".into(), tfdf);
-        let mut tfdf = Tfdf::new("coucou");
-        tfdf.term_freq.push(("doc2".into(), 0.43));
-        segment_to_merge.term_index.insert("coucou".into(), tfdf);
-        segment.add_segment(segment_to_merge);
-
-        assert!(segment.term_index.contains_key("deux"));
-        assert!(segment.term_index.contains_key("coucou"));
-        assert_eq!(segment.term_index.get("deux").unwrap().term_freq.len(), 2);
     }
 }
