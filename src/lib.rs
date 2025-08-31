@@ -121,6 +121,9 @@ pub struct Varro {
 
     /// Manifest file representation
     manifest: Arc<RwLock<Manifest>>,
+
+    /// How often to run segment compaction, defaults to 2 seconds.
+    compaction_freq: Arc<Mutex<Duration>>,
 }
 
 impl Varro {
@@ -164,6 +167,8 @@ impl Varro {
         let stop_for_sgement_compactor = stop.clone();
         let manifest_for_compaction = manifest.clone();
         let index_path_for_compaction = path.to_path_buf();
+	let compaction_freq = Arc::new(Mutex::new(Duration::from_secs(2)));
+	let compaction_freq_for_compaction = compaction_freq.clone();
         let segment_compactor = Mutex::new(Some(thread::spawn(move || {
             while !*stop_for_sgement_compactor.clone().lock().unwrap() {
                 let segments_guard = manifest_for_compaction.read().unwrap();
@@ -239,7 +244,10 @@ impl Varro {
                 } else {
                     debug!("No candidate segments for compaction.");
                 }
-                thread::sleep(Duration::from_secs(2));
+                let sleep_guard = compaction_freq_for_compaction.lock().unwrap();
+                let sleep = *sleep_guard;
+                drop(sleep_guard);
+                thread::sleep(sleep);
             }
         })));
 
@@ -251,8 +259,15 @@ impl Varro {
             stop,
             segment_compactor,
             manifest,
+	    compaction_freq,
         };
         Ok(varro)
+    }
+
+    /// Update the Varro instance with a new `compaction_frequency`
+    pub fn with_compaction_frequency(self, duration: Duration) -> Self {
+        *self.compaction_freq.lock().unwrap() = duration;
+        self
     }
 
     pub fn index_size(&self) -> usize {
