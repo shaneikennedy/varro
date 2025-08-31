@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::fs::{create_dir, read, read_dir, remove_file, write};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
@@ -8,7 +8,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use anyhow::{Error, Result};
-use bincode::{config, Decode, Encode};
+use bincode::{Decode, Encode, config};
 use log::{debug, error, info, warn};
 use std::hash::{Hash, Hasher};
 use uuid::Uuid;
@@ -87,11 +87,11 @@ impl Drop for Varro {
     fn drop(&mut self) {
         *self.stop.lock().unwrap() = true;
         if let Some(h) = self.segment_compactor.lock().unwrap().take() {
-	    match h.join() {
-		Ok(_) => debug!("Successfully shut down the compactor thread."),
-		Err(_) => error!("Problem shutting down the compactor thread."),
-	    }
-	};
+            match h.join() {
+                Ok(_) => debug!("Successfully shut down the compactor thread."),
+                Err(_) => error!("Problem shutting down the compactor thread."),
+            }
+        };
     }
 }
 
@@ -129,20 +129,20 @@ impl Varro {
         let documents_path = path.join("documents");
         match path.exists() {
             true => info!("Index dir exists"),
-            false => create_dir(path)?,
+            false => fs::create_dir(path)?,
         };
         match documents_path.exists() {
             true => info!("Documents subdir dir exists"),
-            false => create_dir(documents_path.clone())?,
+            false => fs::create_dir(documents_path.clone())?,
         };
 
         // For now we can be dumb and literally just count the files in the document_path
-        let total_docs = read_dir(documents_path.clone())?;
+        let total_docs = fs::read_dir(documents_path.clone())?;
         let total_docs = total_docs.count();
         info!("Initializing with {total_docs} docs in the index.");
 
         // Read manifest file into memory if there is one.
-        let contents = read(path.join("manifest.varro"));
+        let contents = fs::read(path.join("manifest.varro"));
         let manifest = match contents {
             Ok(c) => {
                 let config = config::standard();
@@ -180,7 +180,7 @@ impl Varro {
                     for (seg_id, _) in segments_to_merge.clone() {
                         let segment_file = format!("{seg_id}.seg");
                         let segment_path = index_path_for_compaction.join(&segment_file);
-                        let contents = read(&segment_path);
+                        let contents = fs::read(&segment_path);
                         let segment = match contents {
                             Ok(c) => {
                                 let config = config::standard();
@@ -199,7 +199,7 @@ impl Varro {
                     let config = config::standard();
                     let bytes = bincode::encode_to_vec(merged_segment, config).unwrap();
                     let segment_id = Uuid::new_v4().to_string();
-                    let res = write(
+                    let res = fs::write(
                         index_path_for_compaction.join(segment_id.clone() + ".seg"),
                         &bytes,
                     );
@@ -219,7 +219,7 @@ impl Varro {
                     // write the new manifest file
                     let manifest_guard = manifest_for_compaction.read().unwrap();
                     let bytes = bincode::encode_to_vec(&*manifest_guard, config).unwrap();
-                    let res = write(index_path_for_compaction.join("manifest.varro"), bytes);
+                    let res = fs::write(index_path_for_compaction.join("manifest.varro"), bytes);
                     match res {
                         Ok(_) => debug!("Successfully wrote new manifest"),
                         Err(_) => error!("Unable to write new manifest"),
@@ -228,8 +228,9 @@ impl Varro {
 
                     // Cleanup merged segments
                     for (seg_id, _) in segments_to_merge {
-                        let res =
-                            remove_file(index_path_for_compaction.join(format!("{seg_id}.seg")));
+                        let res = fs::remove_file(
+                            index_path_for_compaction.join(format!("{seg_id}.seg")),
+                        );
                         match res {
                             Ok(_) => debug!("Deleted {seg_id}.seg after compaction"),
                             Err(_) => error!("Problem deleting {seg_id}.seg after compaction"),
@@ -280,7 +281,7 @@ impl Varro {
         let p = self.documents_path.join(id.clone());
         let config = config::standard();
         let bytes = bincode::encode_to_vec(doc, config)?;
-        Ok(write(p, bytes)?)
+        Ok(fs::write(p, bytes)?)
     }
 
     /// Text search, given an input string query the index and return a list of Document Ids
@@ -296,7 +297,7 @@ impl Varro {
         for f in segment_files.keys() {
             let segment_file = format!("{f}.seg");
             let segment_path = self.index_path.join(&segment_file);
-            let contents = read(&segment_path);
+            let contents = fs::read(&segment_path);
             let segment = match contents {
                 Ok(c) => {
                     let config = config::standard();
@@ -339,7 +340,7 @@ impl Varro {
 
     /// Retrive a document by it's Document.id, returns an Option type wrapping a Document
     pub fn retrieve(&self, id: String) -> Option<Document> {
-        let file = read(self.documents_path.join(id.clone()));
+        let file = fs::read(self.documents_path.join(id.clone()));
         match file {
             Ok(f) => {
                 let config = config::standard();
@@ -383,7 +384,7 @@ impl Varro {
         drop(manifest_guard);
         let manifest_guard = self.manifest.read().unwrap();
         let bytes = bincode::encode_to_vec(&*manifest_guard, config)?;
-        write(self.index_path().join("manifest.varro"), bytes)?;
+        fs::write(self.index_path().join("manifest.varro"), bytes)?;
         Ok(())
     }
 
@@ -391,7 +392,7 @@ impl Varro {
         let config = config::standard();
         let bytes = bincode::encode_to_vec(seg, config)?;
         let segment_id = Uuid::new_v4().to_string();
-        write(self.index_path().join(segment_id.clone() + ".seg"), &bytes)?;
+        fs::write(self.index_path().join(segment_id.clone() + ".seg"), &bytes)?;
         Ok((segment_id, bytes.len()))
     }
 }
