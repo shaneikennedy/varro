@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::fs::{create_dir, read, read_dir, write};
+use std::fs::{create_dir, read, read_dir, remove_file, write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
@@ -155,7 +155,7 @@ impl Varro {
         let segment_compactor = Mutex::new(thread::spawn(move || {
             while !*stop_for_sgement_compactor.clone().lock().unwrap() {
                 let segments_guard = manifest_for_compaction.read().unwrap();
-                debug!("Determine whate segments to merge");
+                debug!("Determine whate segments to compact");
                 let segments_to_merge = segments_guard.segments.clone();
                 drop(segments_guard);
                 let segments_to_merge = segments_to_merge
@@ -199,7 +199,7 @@ impl Varro {
                     // update manifest to add new merge segment AND remove merged segments
                     let mut manifest_guard = manifest_for_compaction.write().unwrap();
                     manifest_guard.segments.insert(segment_id, bytes.len());
-                    for (seg_id, _) in segments_to_merge {
+                    for (seg_id, _) in segments_to_merge.clone() {
                         manifest_guard.segments.remove(seg_id);
                     }
                     drop(manifest_guard);
@@ -213,6 +213,18 @@ impl Varro {
                         Err(_) => error!("Unable to write new manifest"),
                     };
                     drop(manifest_guard);
+
+                    // Cleanup merged segments
+                    for (seg_id, _) in segments_to_merge {
+                        let res =
+                            remove_file(index_path_for_compaction.join(format!("{seg_id}.seg")));
+                        match res {
+                            Ok(_) => debug!("Deleted {seg_id}.seg after compaction"),
+                            Err(_) => error!("Problem deleting {seg_id}.seg after compaction"),
+                        }
+                    }
+                } else {
+                    debug!("No candidate segments for compaction.");
                 }
                 thread::sleep(Duration::from_secs(10));
             }
