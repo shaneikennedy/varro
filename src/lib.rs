@@ -8,7 +8,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use anyhow::{Error, Result};
-use bincode::{config, Decode, Encode};
+use bincode::{Decode, Encode, config};
 use log::{debug, error, info, warn};
 use std::hash::{Hash, Hasher};
 use uuid::Uuid;
@@ -32,7 +32,7 @@ impl Field {
 
 type SegmentId = String;
 type SegmentSize = usize;
-#[derive(Encode, Decode)]
+#[derive(Encode, Decode, Debug)]
 pub struct Manifest {
     segments: HashMap<SegmentId, SegmentSize>,
 }
@@ -108,7 +108,7 @@ pub struct Varro {
     stop: Arc<Mutex<bool>>,
 
     /// Manifest file representation
-    manifest: RwLock<Manifest>,
+    manifest: Arc<RwLock<Manifest>>,
 }
 
 impl Varro {
@@ -129,16 +129,6 @@ impl Varro {
         let total_docs = total_docs.count();
         info!("Initializing with {total_docs} docs in the index.");
 
-        // Setup the segment compactor thread
-        let stop = Arc::new(Mutex::new(false));
-        let stop_for_sgement_compactor = stop.clone();
-        let segment_compactor = Mutex::new(thread::spawn(move || {
-            while !*stop_for_sgement_compactor.clone().lock().unwrap() {
-                info!("Here in the segment compaction thread!");
-                thread::sleep(Duration::from_secs(10));
-            }
-        }));
-
         // Read manifest file into memory if there is one.
         let contents = read(path.join("manifest.varro"));
         let manifest = match contents {
@@ -146,15 +136,87 @@ impl Varro {
                 let config = config::standard();
                 let (decoded, _): (Manifest, usize) =
                     bincode::decode_from_slice(&c[..], config).unwrap();
-                decoded
+                debug!("Manifest found on init: {:#?}", decoded);
+                Arc::new(RwLock::new(decoded))
             }
             Err(_) => {
                 warn!("No manifest file found, starting a new one.");
-                Manifest {
+                Arc::new(RwLock::new(Manifest {
                     segments: HashMap::new(),
-                }
+                }))
             }
         };
+
+        // Setup the segment compactor thread
+        let stop = Arc::new(Mutex::new(false));
+        let stop_for_sgement_compactor = stop.clone();
+        let manifest_for_compaction = manifest.clone();
+        let index_path_for_compaction = path.to_path_buf();
+        let segment_compactor = Mutex::new(thread::spawn(move || {
+            while !*stop_for_sgement_compactor.clone().lock().unwrap() {
+                let segments_guard = manifest_for_compaction.read().unwrap();
+                debug!("Determine whate segments to merge");
+                let segments_to_merge = segments_guard.segments.clone();
+                drop(segments_guard);
+                let segments_to_merge = segments_to_merge
+                    .iter()
+                    .filter(|&(_, &size)| size <= 1000000)
+                    .clone();
+                let mut merged_segment = Segment::new();
+                if segments_to_merge.clone().count() > 1 {
+                    // Merge all small segments
+                    for (seg_id, _) in segments_to_merge.clone() {
+                        let segment_file = format!("{seg_id}.seg");
+                        let segment_path = index_path_for_compaction.join(&segment_file);
+                        let contents = read(&segment_path);
+                        let segment = match contents {
+                            Ok(c) => {
+                                let config = config::standard();
+                                let (decoded, _): (Segment, usize) =
+                                    bincode::decode_from_slice(&c[..], config).unwrap();
+                                Some(decoded)
+                            }
+                            Err(_) => None,
+                        };
+                        match segment {
+                            Some(s) => merged_segment.add_segment(s),
+                            None => todo!(),
+                        }
+                    }
+                    // write new merged segment
+                    let config = config::standard();
+                    let bytes = bincode::encode_to_vec(merged_segment, config).unwrap();
+                    let segment_id = Uuid::new_v4().to_string();
+                    let res = write(
+                        index_path_for_compaction.join(segment_id.clone() + ".seg"),
+                        &bytes,
+                    );
+                    match res {
+                        Ok(_) => debug!("Successfully wrote new compacted segment {segment_id}"),
+                        Err(_) => error!("Problem writing compacted segment"),
+                    }
+
+                    // update manifest to add new merge segment AND remove merged segments
+                    let mut manifest_guard = manifest_for_compaction.write().unwrap();
+                    manifest_guard.segments.insert(segment_id, bytes.len());
+                    for (seg_id, _) in segments_to_merge {
+                        manifest_guard.segments.remove(seg_id);
+                    }
+                    drop(manifest_guard);
+
+                    // write the new manifest file
+                    let manifest_guard = manifest_for_compaction.read().unwrap();
+                    let bytes = bincode::encode_to_vec(&*manifest_guard, config).unwrap();
+                    let res = write(index_path_for_compaction.join("manifest.varro"), bytes);
+                    match res {
+                        Ok(_) => debug!("Successfully wrote new manifest"),
+                        Err(_) => error!("Unable to write new manifest"),
+                    };
+                    drop(manifest_guard);
+                }
+                thread::sleep(Duration::from_secs(10));
+            }
+        }));
 
         let varro = Varro {
             index_path: path.to_path_buf(),
@@ -163,7 +225,7 @@ impl Varro {
             total_docs: AtomicUsize::new(total_docs),
             stop,
             segment_compactor,
-            manifest: RwLock::new(manifest),
+            manifest,
         };
         Ok(varro)
     }
@@ -206,9 +268,9 @@ impl Varro {
         // Get all the segment files and load them into memory, merging them all into a master segment
         let segment_files = &self.manifest.read().unwrap().segments;
         let mut master_segment = Segment::new();
-	debug!("Searching through segment files: {:#?}", segment_files);
-        for (f, _) in segment_files {
-	    let segment_file = format!("{f}.seg");
+        debug!("Searching through segment files: {:#?}", segment_files);
+        for f in segment_files.keys() {
+            let segment_file = format!("{f}.seg");
             let segment_path = self.index_path.join(&segment_file);
             let contents = read(&segment_path);
             let segment = match contents {
