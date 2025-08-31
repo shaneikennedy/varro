@@ -308,6 +308,9 @@ impl Varro {
         let mut docs = self.buffer.lock().unwrap();
         let handle = thread::spawn(move || DocumentSegment::new(&doc));
         docs.push(handle);
+
+        // TODO automatically flush if the buffer hits a certain size, which is configurable
+
         Ok(())
     }
 
