@@ -5,7 +5,9 @@ use log::{LevelFilter, error, info, warn};
 use varro::Varro;
 
 fn main() -> Result<()> {
-    env_logger::builder().filter_level(LevelFilter::Info).init();
+    env_logger::builder()
+        .filter_level(LevelFilter::Debug)
+        .init();
 
     let search_engine = Varro::new(Path::new("./.index"))?;
     if search_engine.index_size() == 0 {

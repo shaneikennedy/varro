@@ -3,7 +3,7 @@ use std::fs::{create_dir, read, read_dir, write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -28,6 +28,13 @@ impl Field {
     pub fn contents(&self) -> String {
         self.contents.clone()
     }
+}
+
+type SegmentId = String;
+type SegmentSize = usize;
+#[derive(Encode, Decode, Debug)]
+pub struct Manifest {
+    segments: HashMap<SegmentId, SegmentSize>,
 }
 
 /// The model representing a document that has been indexed by Varro
@@ -99,6 +106,9 @@ pub struct Varro {
     /// Stop signal is how we kill the segment_compactor for Drop
     #[allow(dead_code)]
     stop: Arc<Mutex<bool>>,
+
+    /// Manifest file representation
+    manifest: Arc<RwLock<Manifest>>,
 }
 
 impl Varro {
@@ -119,15 +129,95 @@ impl Varro {
         let total_docs = total_docs.count();
         info!("Initializing with {total_docs} docs in the index.");
 
+        // Read manifest file into memory if there is one.
+        let contents = read(path.join("manifest.varro"));
+        let manifest = match contents {
+            Ok(c) => {
+                let config = config::standard();
+                let (decoded, _): (Manifest, usize) =
+                    bincode::decode_from_slice(&c[..], config).unwrap();
+                debug!("Manifest found on init: {:#?}", decoded);
+                Arc::new(RwLock::new(decoded))
+            }
+            Err(_) => {
+                warn!("No manifest file found, starting a new one.");
+                Arc::new(RwLock::new(Manifest {
+                    segments: HashMap::new(),
+                }))
+            }
+        };
+
         // Setup the segment compactor thread
         let stop = Arc::new(Mutex::new(false));
         let stop_for_sgement_compactor = stop.clone();
+        let manifest_for_compaction = manifest.clone();
+        let index_path_for_compaction = path.to_path_buf();
         let segment_compactor = Mutex::new(thread::spawn(move || {
             while !*stop_for_sgement_compactor.clone().lock().unwrap() {
-                info!("Here in the segment compaction thread!");
+                let segments_guard = manifest_for_compaction.read().unwrap();
+                debug!("Determine whate segments to merge");
+                let segments_to_merge = segments_guard.segments.clone();
+                drop(segments_guard);
+                let segments_to_merge = segments_to_merge
+                    .iter()
+                    .filter(|&(_, &size)| size <= 1000000)
+                    .clone();
+                let mut merged_segment = Segment::new();
+                if segments_to_merge.clone().count() > 1 {
+                    // Merge all small segments
+                    for (seg_id, _) in segments_to_merge.clone() {
+                        let segment_file = format!("{seg_id}.seg");
+                        let segment_path = index_path_for_compaction.join(&segment_file);
+                        let contents = read(&segment_path);
+                        let segment = match contents {
+                            Ok(c) => {
+                                let config = config::standard();
+                                let (decoded, _): (Segment, usize) =
+                                    bincode::decode_from_slice(&c[..], config).unwrap();
+                                Some(decoded)
+                            }
+                            Err(_) => None,
+                        };
+                        match segment {
+                            Some(s) => merged_segment.add_segment(s),
+                            None => todo!(),
+                        }
+                    }
+                    // write new merged segment
+                    let config = config::standard();
+                    let bytes = bincode::encode_to_vec(merged_segment, config).unwrap();
+                    let segment_id = Uuid::new_v4().to_string();
+                    let res = write(
+                        index_path_for_compaction.join(segment_id.clone() + ".seg"),
+                        &bytes,
+                    );
+                    match res {
+                        Ok(_) => debug!("Successfully wrote new compacted segment {segment_id}"),
+                        Err(_) => error!("Problem writing compacted segment"),
+                    }
+
+                    // update manifest to add new merge segment AND remove merged segments
+                    let mut manifest_guard = manifest_for_compaction.write().unwrap();
+                    manifest_guard.segments.insert(segment_id, bytes.len());
+                    for (seg_id, _) in segments_to_merge {
+                        manifest_guard.segments.remove(seg_id);
+                    }
+                    drop(manifest_guard);
+
+                    // write the new manifest file
+                    let manifest_guard = manifest_for_compaction.read().unwrap();
+                    let bytes = bincode::encode_to_vec(&*manifest_guard, config).unwrap();
+                    let res = write(index_path_for_compaction.join("manifest.varro"), bytes);
+                    match res {
+                        Ok(_) => debug!("Successfully wrote new manifest"),
+                        Err(_) => error!("Unable to write new manifest"),
+                    };
+                    drop(manifest_guard);
+                }
                 thread::sleep(Duration::from_secs(10));
             }
         }));
+
         let varro = Varro {
             index_path: path.to_path_buf(),
             documents_path: documents_path.clone(),
@@ -135,6 +225,7 @@ impl Varro {
             total_docs: AtomicUsize::new(total_docs),
             stop,
             segment_compactor,
+            manifest,
         };
         Ok(varro)
     }
@@ -175,40 +266,29 @@ impl Varro {
         let tokens = tokenize(query.as_str());
 
         // Get all the segment files and load them into memory, merging them all into a master segment
-        let segment_files = read_dir(self.index_path.clone())
-            .unwrap()
-            .filter_map(|f| f.ok())
-            .filter(|d| d.file_name().into_string().unwrap().contains(".seg"));
+        let segment_files = &self.manifest.read().unwrap().segments;
         let mut master_segment = Segment::new();
-        for f in segment_files {
-            if f.file_type().unwrap().is_file() {
-                let contents = read(f.path());
-                let segment = match contents {
-                    Ok(c) => {
-                        let config = config::standard();
-                        let (decoded, _): (Segment, usize) =
-                            bincode::decode_from_slice(&c[..], config).unwrap();
-                        Some(decoded)
-                    }
-                    Err(_) => None,
-                };
-
-                // Merge the segments
-                match segment {
-                    Some(s) => {
-                        for (term, tfdf) in s.term_index {
-                            master_segment
-                                .term_index
-                                .entry(term)
-                                .and_modify(|t| {
-                                    t.doc_freq += tfdf.doc_freq;
-                                    t.term_freq.extend(tfdf.term_freq.clone());
-                                })
-                                .or_insert(tfdf);
-                        }
-                    }
-                    None => warn!("Unable to read segment file {:#?}", f.path()),
+        debug!("Searching through segment files: {:#?}", segment_files);
+        for f in segment_files.keys() {
+            let segment_file = format!("{f}.seg");
+            let segment_path = self.index_path.join(&segment_file);
+            let contents = read(&segment_path);
+            let segment = match contents {
+                Ok(c) => {
+                    let config = config::standard();
+                    let (decoded, _): (Segment, usize) =
+                        bincode::decode_from_slice(&c[..], config).unwrap();
+                    Some(decoded)
                 }
+                Err(_) => None,
+            };
+
+            // Merge the segments
+            match segment {
+                Some(s) => {
+                    master_segment.add_segment(s);
+                }
+                None => warn!("Unable to read segment file {:#?}", segment_path),
             }
         }
 
@@ -263,16 +343,32 @@ impl Varro {
             // TODO: this wraps around on overflow
             self.total_docs.fetch_add(1, SeqCst);
         }
-        self.write_segment(&segment)
+        let (segment_id, segment_size) = self.write_segment(&segment)?;
+
+        // Update the manifest file
+        debug!("Start update manifest file");
+        let mut manifest_guard = self.manifest.write().unwrap();
+        manifest_guard
+            .segments
+            .insert(segment_id.clone(), segment_size);
+        debug!(
+            "Manifest object now contains segments: {:#?}",
+            manifest_guard.segments
+        );
+        let config = config::standard();
+        drop(manifest_guard);
+        let manifest_guard = self.manifest.read().unwrap();
+        let bytes = bincode::encode_to_vec(&*manifest_guard, config)?;
+        write(self.index_path().join("manifest.varro"), bytes)?;
+        Ok(())
     }
 
-    fn write_segment(&self, seg: &Segment) -> Result<()> {
+    fn write_segment(&self, seg: &Segment) -> Result<(SegmentId, usize)> {
         let config = config::standard();
         let bytes = bincode::encode_to_vec(seg, config)?;
-        Ok(write(
-            self.index_path().join(Uuid::new_v4().to_string() + ".seg"),
-            bytes,
-        )?)
+        let segment_id = Uuid::new_v4().to_string();
+        write(self.index_path().join(segment_id.clone() + ".seg"), &bytes)?;
+        Ok((segment_id, bytes.len()))
     }
 }
 
@@ -323,6 +419,19 @@ impl Segment {
                 tfdf.add_for_doc(seg);
                 self.term_index.insert(term.to_string(), tfdf);
             }
+        }
+    }
+
+    // Used during segment compaction
+    fn add_segment(&mut self, seg: Segment) {
+        for (term, tfdf) in seg.term_index {
+            self.term_index
+                .entry(term)
+                .and_modify(|t| {
+                    t.doc_freq += tfdf.doc_freq;
+                    t.term_freq.extend(tfdf.term_freq.clone());
+                })
+                .or_insert(tfdf);
         }
     }
 }
@@ -437,5 +546,50 @@ mod tokenize_tests {
         let contents = "For once and for all".to_string();
         let tokens: Vec<String> = tokenize(&contents).collect();
         assert_eq!(vec!["once", "all"], tokens);
+    }
+}
+
+#[cfg(test)]
+mod segment_tests {
+    use super::*;
+
+    #[test]
+    fn test_add_document_segment() {
+        let mut segment = Segment::new();
+        let mut doc1 = Document::new();
+        doc1.add_field(
+            "content".into(),
+            "mes deux chats chili och arnie".into(),
+            false,
+        );
+        let doc_seg_1 = DocumentSegment::new(&doc1);
+        segment.add_docucment_segment(&doc_seg_1);
+
+        assert!(segment.term_index.contains_key("deux"));
+        let tfdf = segment.term_index.get("deux").unwrap();
+        assert_eq!(tfdf.term, "deux");
+        assert_eq!(tfdf.term_freq.len(), 1);
+        assert!(tfdf.term_freq.iter().any(|(doc_id, _)| doc_id == &doc1.id));
+    }
+
+    #[test]
+    fn test_add_segment() {
+        let mut segment = Segment::new();
+        let mut tfdf = Tfdf::new("deux");
+        tfdf.term_freq.push(("doc1".into(), 0.43));
+        segment.term_index.insert("deux".into(), tfdf);
+
+        let mut segment_to_merge = Segment::new();
+        let mut tfdf = Tfdf::new("deux");
+        tfdf.term_freq.push(("doc2".into(), 0.43));
+        segment_to_merge.term_index.insert("deux".into(), tfdf);
+        let mut tfdf = Tfdf::new("coucou");
+        tfdf.term_freq.push(("doc2".into(), 0.43));
+        segment_to_merge.term_index.insert("coucou".into(), tfdf);
+        segment.add_segment(segment_to_merge);
+
+        assert!(segment.term_index.contains_key("deux"));
+        assert!(segment.term_index.contains_key("coucou"));
+        assert_eq!(segment.term_index.get("deux").unwrap().term_freq.len(), 2);
     }
 }

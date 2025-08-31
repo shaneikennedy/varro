@@ -32,8 +32,8 @@ pub fn main() -> Result<()> {
         info!(" with contents: {:#?}", debug_contents);
         doc.add_field("contents".into(), contents, false);
         search_engine.index(doc)?;
+        search_engine.flush()?;
     }
-    search_engine.flush()?;
 
     Ok(())
 }
