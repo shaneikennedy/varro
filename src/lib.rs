@@ -82,14 +82,14 @@ impl Varro {
         let manifest = match contents {
             Ok(c) => {
                 let config = config::standard();
-                let (decoded, _): (manifest::Manifest, usize) =
+                let (decoded, _): (Manifest, usize) =
                     bincode::decode_from_slice(&c[..], config).unwrap();
                 debug!("Manifest found on init: {:#?}", decoded);
                 Arc::new(RwLock::new(decoded))
             }
             Err(_) => {
                 warn!("No manifest file found, starting a new one.");
-                Arc::new(RwLock::new(manifest::Manifest {
+                Arc::new(RwLock::new(Manifest {
                     segments: HashMap::new(),
                 }))
             }
@@ -146,13 +146,13 @@ impl Varro {
     }
 
     /// Index a document, this takes a Document, stores it, adds the index to the document buffer, and returns whether it was successfull or not
-    pub fn index(&self, doc: document::Document) -> Result<()> {
+    pub fn index(&self, doc: Document) -> Result<()> {
         // First things first get this thing written to disk
         self.write_doc(&doc)?;
 
         // Then add it to the varro buffer to be indexed
         let mut docs = self.buffer.lock().unwrap();
-        let handle = thread::spawn(move || segment::DocumentSegment::new(&doc));
+        let handle = thread::spawn(move || DocumentSegment::new(&doc));
         docs.push(handle);
 
         // TODO automatically flush if the buffer hits a certain size, which is configurable
@@ -161,7 +161,7 @@ impl Varro {
     }
 
     /// Write a Document to the documents_path for durability and retrieval
-    fn write_doc(&self, doc: &document::Document) -> Result<()> {
+    fn write_doc(&self, doc: &Document) -> Result<()> {
         let id = doc.id().clone();
         let p = self.documents_path.join(id.clone());
         let config = config::standard();
@@ -224,12 +224,12 @@ impl Varro {
     }
 
     /// Retrive a document by it's Document.id, returns an Option type wrapping a Document
-    pub fn retrieve(&self, id: String) -> Option<document::Document> {
+    pub fn retrieve(&self, id: String) -> Option<Document> {
         let file = fs::read(self.documents_path.join(id.clone()));
         match file {
             Ok(f) => {
                 let config = config::standard();
-                let (decoded, _): (document::Document, usize) =
+                let (decoded, _): (Document, usize) =
                     bincode::decode_from_slice(&f[..], config).unwrap();
                 Some(decoded)
             }
