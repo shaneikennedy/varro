@@ -98,7 +98,6 @@ impl Drop for Varro {
 /// The model for indexing, querying and retrieveing documents
 pub struct Varro {
     /// Where on the filesystem to store files and their indexes
-    #[allow(dead_code)]
     index_path: PathBuf,
 
     /// Where the full document objects are actually stored
@@ -112,11 +111,9 @@ pub struct Varro {
 
     /// Segment compactor is the handle to the background thread that's
     /// compacting segments when they get too big
-    #[allow(dead_code)]
     segment_compactor: Mutex<Option<JoinHandle<()>>>,
 
     /// Stop signal is how we kill the segment_compactor for Drop
-    #[allow(dead_code)]
     stop: Arc<Mutex<bool>>,
 
     /// Manifest file representation
@@ -438,7 +435,6 @@ impl Varro {
 
 pub struct DocumentScore {
     pub document_id: String,
-    #[allow(dead_code)]
     pub score: f64,
 }
 
@@ -532,7 +528,6 @@ impl Tfdf {
 
 #[derive(Debug)]
 struct DocumentSegment {
-    #[allow(dead_code)]
     document_id: String,
     // Total number of words in the doc
     document_length: i32,
