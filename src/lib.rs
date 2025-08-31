@@ -289,10 +289,12 @@ impl Varro {
         self
     }
 
+    /// The total number of docs in the Varro index
     pub fn index_size(&self) -> usize {
         self.total_docs.load(SeqCst)
     }
 
+    /// The current configured path for Varro to store it's index files
     pub fn index_path(&self) -> &Path {
         self.index_path.as_path()
     }
