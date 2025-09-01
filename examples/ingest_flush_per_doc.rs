@@ -24,7 +24,7 @@ pub fn main() -> Result<()> {
         let path = Path::new("./documents").join(file.clone());
         info!("path: {:#?}", path.clone());
         let contents = read_to_string(path)?;
-        let mut doc = varro::Document::new();
+        let mut doc = varro::Document::default();
         info!("Ingesting {}", file.to_str().unwrap());
         doc.add_field("name".into(), file.to_str().unwrap().to_string(), false);
         let mut debug_contents = contents.clone();

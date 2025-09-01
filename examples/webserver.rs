@@ -25,10 +25,10 @@ struct SearchQuery {
 #[get("/")]
 async fn index(q: web::Query<SearchQuery>, varro: web::Data<Arc<Varro>>) -> Result<impl Responder> {
     info!("Got search request for: {}", q.q.clone());
-    let results = varro.search(q.q.clone());
+    let results = varro.search(q.q.clone(), None);
     let mut results = results
-        .map(|r| {
-            let doc = varro.retrieve(r.document_id).unwrap();
+        .map(|(doc, score)| {
+            let doc = varro.retrieve(doc.id()).unwrap();
 
             DocumentScore {
                 doc: (
@@ -36,7 +36,7 @@ async fn index(q: web::Query<SearchQuery>, varro: web::Data<Arc<Varro>>) -> Resu
                     // doc.get_field("contents".into()).unwrap().contents(),
                     "".into(),
                 ),
-                score: r.score,
+                score,
             }
         })
         .collect::<Vec<_>>();
