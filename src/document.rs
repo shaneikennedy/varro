@@ -32,7 +32,7 @@ pub struct Document {
 
 impl Default for Document {
     fn default() -> Self {
-        Self::new()
+        Self::new(Uuid::new_v4().to_string())
     }
 }
 
@@ -43,9 +43,9 @@ impl Hash for Document {
 }
 
 impl Document {
-    pub fn new() -> Document {
+    pub fn new(id: String) -> Document {
         Document {
-            id: Uuid::new_v4().to_string(),
+            id,
             fields: HashSet::new(),
         }
     }

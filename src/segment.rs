@@ -117,7 +117,7 @@ mod document_segment_tests {
 
     #[test]
     fn test_document_segment() {
-        let mut doc = document::Document::new();
+        let mut doc = document::Document::default();
         doc.add_field("name".into(), "wow such nice test".into(), true);
         doc.add_field("body".into(), "wow such nice test again".into(), true);
         let doc_seg = DocumentSegment::new(&doc);
@@ -137,7 +137,7 @@ mod segment_tests {
     #[test]
     fn test_add_document_segment() {
         let mut segment = Segment::new();
-        let mut doc1 = document::Document::new();
+        let mut doc1 = document::Document::default();
         doc1.add_field(
             "content".into(),
             "mes deux chats chili och arnie".into(),
