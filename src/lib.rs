@@ -1,5 +1,6 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
+use std::ops::Add;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
@@ -10,7 +11,6 @@ use std::time::Duration;
 use anyhow::{Error, Result};
 use bincode::config;
 use log::{debug, error, info, warn};
-use std::hash::{Hash, Hasher};
 use uuid::Uuid;
 
 mod compaction;
@@ -171,7 +171,11 @@ impl Varro {
 
     /// Text search, given an input string query the index and return a list of Document Ids
     /// and their corresponding TDIDF score (higher is better) that match the search
-    pub fn search(&self, query: String) -> impl Iterator<Item = DocumentScore> {
+    pub fn search(
+        &self,
+        query: String,
+        options: Option<SearchOptions>,
+    ) -> impl Iterator<Item = (Document, Score)> {
         info!("Searching for {query}");
         let tokens = tokens::tokenize(query.as_str());
 
@@ -203,7 +207,7 @@ impl Varro {
         }
 
         // Collect any doc where any token in the query exist and caluclate the tfidf
-        let mut matching_docs: HashSet<DocumentScore> = HashSet::new();
+        let mut matching_docs: HashMap<Document, Score> = HashMap::new();
         debug!("Total docs in index: {}", self.total_docs.load(SeqCst));
         for token in tokens {
             if let Some(tfdf) = master_segment.term_index.get(&token) {
@@ -218,16 +222,26 @@ impl Varro {
                     // i.e match all docs that have any match in the tokenized query,
                     // but score them higher if they match multiple terms. Naively,
                     // we will simply add the scores. TODO figure out how apache lucene does this
-                    let mut doc_score = DocumentScore {
-                        document_id: doc_id.to_string(),
-                        score: tfidf,
-                    };
-                    if matching_docs.contains(&doc_score) {
-                        let existing_score = matching_docs.get(&doc_score).unwrap();
-                        doc_score.score += existing_score.score;
-                        matching_docs.insert(doc_score);
-                    } else {
-                        matching_docs.insert(doc_score);
+                    let mut doc = Document::new(doc_id.to_string());
+                    match matching_docs.contains_key(&doc) {
+                        true => {
+                            matching_docs
+                                .entry(doc)
+                                .and_modify(|v| {
+                                    let _ = v.add(tfidf);
+                                })
+                                .or_insert(tfidf);
+                        }
+                        false => {
+                            if let Some(o) = &options {
+                                #[allow(clippy::collapsible_if)]
+                                if o.include_documents {
+                                    // find doc
+                                    doc = self.get_doc_by_id(doc_id.to_string()).unwrap();
+                                }
+                            }
+                            matching_docs.insert(doc, tfidf);
+                        }
                     }
                 });
             }
@@ -235,8 +249,7 @@ impl Varro {
         matching_docs.into_iter()
     }
 
-    /// Retrive a document by it's Document.id, returns an Option type wrapping a Document
-    pub fn retrieve(&self, id: String) -> Option<Document> {
+    fn get_doc_by_id(&self, id: String) -> Option<Document> {
         let file = fs::read(self.documents_path.join(id.clone()));
         match file {
             Ok(f) => {
@@ -247,6 +260,11 @@ impl Varro {
             }
             Err(_) => None,
         }
+    }
+
+    /// Retrive a document by it's Document.id, returns an Option type wrapping a Document
+    pub fn retrieve(&self, id: String) -> Option<Document> {
+        self.get_doc_by_id(id)
     }
 
     /// Flush the indexes to disk, this needs to happen before a document is searchable
@@ -306,21 +324,31 @@ impl Drop for Varro {
     }
 }
 
-pub struct DocumentScore {
-    pub document_id: String,
-    pub score: f64,
+pub type Score = f64;
+
+#[derive(Clone)]
+pub struct SearchOptions {
+    /// Whether or not to return the full document object in the search response.
+    /// By default only the Document ID is returned to be used to fetch at a later time,
+    /// that is, default = false.
+    include_documents: bool,
 }
 
-impl PartialEq for DocumentScore {
-    fn eq(&self, other: &Self) -> bool {
-        self.document_id == other.document_id
+impl Default for SearchOptions {
+    fn default() -> Self {
+        SearchOptions::new()
     }
 }
 
-impl Eq for DocumentScore {}
+impl SearchOptions {
+    pub fn new() -> Self {
+        SearchOptions {
+            include_documents: false,
+        }
+    }
 
-impl Hash for DocumentScore {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.document_id.hash(state);
+    pub fn include_documents(&mut self, include_documents: bool) -> Self {
+        self.include_documents = include_documents;
+        self.clone()
     }
 }
