@@ -213,10 +213,22 @@ impl Varro {
                     let idf =
                         (self.total_docs.load(SeqCst) as f64 / docs_with_term as f64).log(10.0);
                     let tfidf = tf * idf;
-                    matching_docs.insert(DocumentScore {
+
+                    // Right now we process all terms in the search query as OR,
+                    // i.e match all docs that have any match in the tokenized query,
+                    // but score them higher if they match multiple terms. Naively,
+                    // we will simply add the scores. TODO figure out how apache lucene does this
+                    let mut doc_score = DocumentScore {
                         document_id: doc_id.to_string(),
                         score: tfidf,
-                    });
+                    };
+                    if matching_docs.contains(&doc_score) {
+                        let existing_score = matching_docs.get(&doc_score).unwrap();
+                        doc_score.score += existing_score.score;
+                        matching_docs.insert(doc_score);
+                    } else {
+                        matching_docs.insert(doc_score);
+                    }
                 });
             }
         }
