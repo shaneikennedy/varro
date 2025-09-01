@@ -8,6 +8,7 @@ Varro is a text-based search engine inspired by Apache Lucene, attempting to off
 ## TODOs
 - [x] TFIDF scoring on search
 - [ ] BM25 scoring on search
+- [x] Configurable boolean querying for multi-term queries (default OR)
 - [x] Segment compaction and cleanup
 - [ ] Indexing token positions in documents
 - [ ] Compile to wasm and have full in-browser search engine
