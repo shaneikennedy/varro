@@ -206,9 +206,11 @@ impl Varro {
             }
         }
 
-        // Collect any doc where any token in the query exist and caluclate the tfidf
         let mut matching_docs: HashMap<Document, Score> = HashMap::new();
+        let mut matching_docs_for_token: HashMap<String, Vec<(Document, Score)>> = HashMap::new();
         debug!("Total docs in index: {}", self.total_docs.load(SeqCst));
+        let opts = options.unwrap_or_default();
+        // Collect a map of terms to docs for which the term appears, and it's tfidf score
         for token in tokens {
             if let Some(tfdf) = master_segment.term_index.get(&token) {
                 let docs_with_term = tfdf.term_freq.len();
@@ -217,34 +219,68 @@ impl Varro {
                     let idf =
                         (self.total_docs.load(SeqCst) as f64 / docs_with_term as f64).log(10.0);
                     let tfidf = tf * idf;
+                    matching_docs_for_token
+                        .entry(token.clone())
+                        .and_modify(|vec| vec.push((Document::new(doc_id.to_string()), tfidf)))
+                        .or_insert(vec![(Document::new(doc_id.to_string()), tfidf)]);
+                });
+            } else {
+                debug!("No docs for term {token}");
+                matching_docs_for_token.insert(token, Vec::new());
+            }
+        }
 
-                    // Right now we process all terms in the search query as OR,
-                    // i.e match all docs that have any match in the tokenized query,
-                    // but score them higher if they match multiple terms. Naively,
-                    // we will simply add the scores. TODO figure out how apache lucene does this
-                    let mut doc = Document::new(doc_id.to_string());
-                    match matching_docs.contains_key(&doc) {
-                        true => {
-                            matching_docs
-                                .entry(doc)
-                                .and_modify(|v| {
-                                    let _ = v.add(tfidf);
-                                })
-                                .or_insert(tfidf);
-                        }
-                        false => {
-                            if let Some(o) = &options {
-                                #[allow(clippy::collapsible_if)]
-                                if o.include_documents {
-                                    // find doc
-                                    doc = self.get_doc_by_id(doc_id.to_string()).unwrap();
-                                }
+        // Reduce the map of terms to matching docs to just matching docs based on the search operator
+        match opts.search_operator {
+            SearchOperator::OR => {
+                for docs in matching_docs_for_token.into_values() {
+                    for (doc, score) in docs {
+                        match matching_docs.contains_key(&doc) {
+                            true => {
+                                matching_docs
+                                    .entry(doc)
+                                    .and_modify(|v| {
+                                        let _ = v.add(score);
+                                    })
+                                    .or_insert(score);
                             }
-                            matching_docs.insert(doc, tfidf);
+                            false => {
+                                matching_docs.insert(doc, score);
+                            }
                         }
                     }
-                });
+                }
             }
+            SearchOperator::AND => {
+                for (i, docs) in matching_docs_for_token.into_values().enumerate() {
+                    let mut new_matching_docs: HashMap<Document, Score> = HashMap::new();
+                    for (doc, score) in docs {
+                        // Prefill the matching_docs with the first term, whatever it is
+                        if i == 0 {
+                            matching_docs.insert(doc, score);
+                        } else {
+                            // Then construct a new_matching_docs with only the terms that also exist
+                            // in the previous iteration of matching docs (i.e AND)
+                            if matching_docs.contains_key(&doc) {
+                                let old_score = matching_docs.get(&doc).unwrap();
+                                new_matching_docs.insert(doc, score * old_score);
+                            }
+                        }
+                    }
+
+                    // Only reassign this on the non-first iteration
+                    if i > 0 {
+                        // Swap matching docs with the AND results from this term iteration
+                        matching_docs = new_matching_docs;
+                    }
+                }
+            }
+        }
+        if opts.include_documents {
+            matching_docs = matching_docs
+                .iter()
+                .map(|(d, score)| (self.get_doc_by_id(d.id()).unwrap(), *score))
+                .collect::<HashMap<Document, Score>>();
         }
         matching_docs.into_iter()
     }
@@ -327,11 +363,24 @@ impl Drop for Varro {
 pub type Score = f64;
 
 #[derive(Clone)]
+pub enum SearchOperator {
+    OR,
+    AND,
+}
+
+#[derive(Clone)]
 pub struct SearchOptions {
     /// Whether or not to return the full document object in the search response.
     /// By default only the Document ID is returned to be used to fetch at a later time,
     /// that is, default = false.
     include_documents: bool,
+
+    /// How to treat multi-token search queries. By default Varro uses OR when matching
+    /// and scoring documents. For example, varro.search("git docker", ...) will search
+    /// for documents containing "git" _or_ "docker", while scoring documents with _both_ terms
+    /// higher. When search_operator is set to AND, varro.search("git docker") will only return
+    /// documents with both terms appearing in the document. Default is SearchOperator::OR.
+    search_operator: SearchOperator,
 }
 
 impl Default for SearchOptions {
@@ -344,11 +393,17 @@ impl SearchOptions {
     pub fn new() -> Self {
         SearchOptions {
             include_documents: false,
+            search_operator: SearchOperator::OR,
         }
     }
 
     pub fn include_documents(&mut self, include_documents: bool) -> Self {
         self.include_documents = include_documents;
+        self.clone()
+    }
+
+    pub fn search_operator(&mut self, operator: SearchOperator) -> Self {
+        self.search_operator = operator;
         self.clone()
     }
 }
