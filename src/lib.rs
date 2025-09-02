@@ -1,7 +1,6 @@
 use std::collections::HashMap;
-use std::fs;
 use std::ops::Add;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
 use std::sync::{Arc, Mutex, RwLock};
@@ -15,6 +14,7 @@ use uuid::Uuid;
 
 mod compaction;
 pub mod document;
+mod filesystem;
 mod manifest;
 mod segment;
 mod tokens;
@@ -22,17 +22,12 @@ mod tokens;
 pub use document::{Document, Field};
 
 use crate::compaction::SegmentCompactor;
+use crate::filesystem::{FileSystem, LocalFileSystem};
 use crate::manifest::{Manifest, SegmentId};
 use crate::segment::{DocumentSegment, Segment};
 
 /// The model for indexing, querying and retrieveing documents
 pub struct Varro {
-    /// Where on the filesystem to store files and their indexes
-    index_path: PathBuf,
-
-    /// Where the full document objects are actually stored
-    documents_path: PathBuf,
-
     /// Append only in-memory buffer before flushing to disk
     buffer: Mutex<Vec<JoinHandle<DocumentSegment>>>,
 
@@ -57,28 +52,24 @@ pub struct Varro {
     /// for performance but better when memory is constrained. Larger segments are better for performance
     /// but cause spikes in memory on searches. Default is 64MB.
     min_segment_size: Arc<Mutex<usize>>,
+
+    /// The filesystem abstraction to accomodate different file stores. Default is LocalFileSystem
+    filesystem: Arc<Box<dyn FileSystem>>,
 }
 
 impl Varro {
     /// Contruct a new instance of Varro
     pub fn new(path: &Path) -> Result<Varro> {
-        let documents_path = path.join("documents");
-        match path.exists() {
-            true => info!("Index dir exists"),
-            false => fs::create_dir(path)?,
-        };
-        match documents_path.exists() {
-            true => info!("Documents subdir dir exists"),
-            false => fs::create_dir(documents_path.clone())?,
-        };
+        let filesystem = LocalFileSystem::new(path)?;
+        let filesystem: Arc<Box<dyn FileSystem>> = Arc::new(Box::new(filesystem));
 
         // For now we can be dumb and literally just count the files in the document_path
-        let total_docs = fs::read_dir(documents_path.clone())?;
+        let total_docs = filesystem.read_dir_from_documents()?;
         let total_docs = total_docs.count();
         info!("Initializing with {total_docs} docs in the index.");
 
         // Read manifest file into memory if there is one.
-        let contents = fs::read(path.join("manifest.varro"));
+        let contents = filesystem.read_from_manifest();
         let manifest = match contents {
             Ok(c) => {
                 let config = config::standard();
@@ -110,8 +101,6 @@ impl Varro {
         let segment_compactor = Mutex::new(Some(thread::spawn(move || segment_compactor.run())));
 
         let varro = Varro {
-            index_path: path.to_path_buf(),
-            documents_path: documents_path.clone(),
             buffer: Mutex::new(Vec::new()),
             total_docs: AtomicUsize::new(total_docs),
             stop,
@@ -119,6 +108,7 @@ impl Varro {
             manifest,
             compaction_freq,
             min_segment_size,
+            filesystem,
         };
         Ok(varro)
     }
@@ -140,11 +130,6 @@ impl Varro {
         self.total_docs.load(SeqCst)
     }
 
-    /// The current configured path for Varro to store it's index files
-    pub fn index_path(&self) -> &Path {
-        self.index_path.as_path()
-    }
-
     /// Index a document, this takes a Document, stores it, adds the index to the document buffer, and returns whether it was successfull or not
     pub fn index(&self, doc: Document) -> Result<()> {
         // First things first get this thing written to disk
@@ -163,10 +148,10 @@ impl Varro {
     /// Write a Document to the documents_path for durability and retrieval
     fn write_doc(&self, doc: &Document) -> Result<()> {
         let id = doc.id().clone();
-        let p = self.documents_path.join(id.clone());
         let config = config::standard();
         let bytes = bincode::encode_to_vec(doc, config)?;
-        Ok(fs::write(p, bytes)?)
+        self.filesystem
+            .write_to_document(Path::new(&id.clone()), bytes)
     }
 
     /// Text search, given an input string query the index and return a list of Document Ids
@@ -185,8 +170,7 @@ impl Varro {
         debug!("Searching through segment files: {:#?}", segment_files);
         for f in segment_files.keys() {
             let segment_file = format!("{f}.seg");
-            let segment_path = self.index_path.join(&segment_file);
-            let contents = fs::read(&segment_path);
+            let contents = self.filesystem.read_from_index(Path::new(&segment_file));
             let segment = match contents {
                 Ok(c) => {
                     let config = config::standard();
@@ -202,7 +186,7 @@ impl Varro {
                 Some(s) => {
                     master_segment.add_segment(s);
                 }
-                None => warn!("Unable to read segment file {:#?}", segment_path),
+                None => warn!("Unable to read segment file {:#?}", segment_file),
             }
         }
 
@@ -286,7 +270,7 @@ impl Varro {
     }
 
     fn get_doc_by_id(&self, id: String) -> Option<Document> {
-        let file = fs::read(self.documents_path.join(id.clone()));
+        let file = self.filesystem.read_from_documents(Path::new(&id.clone()));
         match file {
             Ok(f) => {
                 let config = config::standard();
@@ -335,15 +319,17 @@ impl Varro {
         drop(manifest_guard);
         let manifest_guard = self.manifest.read().unwrap();
         let bytes = bincode::encode_to_vec(&*manifest_guard, config)?;
-        fs::write(self.index_path().join("manifest.varro"), bytes)?;
-        Ok(())
+        self.filesystem.write_to_manifest(bytes)
     }
 
     fn write_segment(&self, seg: &Segment) -> Result<(SegmentId, usize)> {
         let config = config::standard();
         let bytes = bincode::encode_to_vec(seg, config)?;
         let segment_id = Uuid::new_v4().to_string();
-        fs::write(self.index_path().join(segment_id.clone() + ".seg"), &bytes)?;
+        self.filesystem.write_to_index(
+            Path::new(&format!("{}.seg", segment_id.clone())),
+            bytes.clone(),
+        )?;
         Ok((segment_id, bytes.len()))
     }
 }
