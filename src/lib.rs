@@ -16,6 +16,7 @@ mod compaction;
 pub mod document;
 mod filesystem;
 mod manifest;
+mod ranking;
 mod segment;
 mod tokens;
 
@@ -24,6 +25,7 @@ pub use document::{Document, Field};
 use crate::compaction::SegmentCompactor;
 use crate::filesystem::{FileSystem, LocalFileSystem};
 use crate::manifest::{Manifest, SegmentId};
+use crate::ranking::RankingType;
 use crate::segment::{DocumentSegment, Segment};
 
 /// The model for indexing, querying and retrieveing documents
@@ -200,13 +202,16 @@ impl Varro {
                 let docs_with_term = tfdf.term_freq.len();
                 debug!("Total docs for term {token}: {docs_with_term}");
                 tfdf.term_freq.iter().for_each(|(doc_id, tf)| {
-                    let idf =
-                        (self.total_docs.load(SeqCst) as f64 / docs_with_term as f64).log(10.0);
-                    let tfidf = tf * idf;
+                    let score = ranking::score(
+                        *tf,
+                        self.total_docs.load(SeqCst) as i32,
+                        docs_with_term as i32,
+                        &opts.ranking_type,
+                    );
                     matching_docs_for_token
                         .entry(token.clone())
-                        .and_modify(|vec| vec.push((Document::new(doc_id.to_string()), tfidf)))
-                        .or_insert(vec![(Document::new(doc_id.to_string()), tfidf)]);
+                        .and_modify(|vec| vec.push((Document::new(doc_id.to_string()), score)))
+                        .or_insert(vec![(Document::new(doc_id.to_string()), score)]);
                 });
             } else {
                 debug!("No docs for term {token}");
@@ -355,12 +360,6 @@ pub enum SearchOperator {
 }
 
 #[derive(Clone)]
-pub enum RankingType {
-    /// The basic TF-IDF algorithm
-    TFIDF,
-}
-
-#[derive(Clone)]
 pub struct SearchOptions {
     /// Whether or not to return the full document object in the search response.
     /// By default only the Document ID is returned to be used to fetch at a later time,
@@ -390,7 +389,7 @@ impl SearchOptions {
         SearchOptions {
             include_documents: false,
             search_operator: SearchOperator::OR,
-            ranking_type: RankingType::TFIDF,
+            ranking_type: RankingType::Tfidf,
         }
     }
 
