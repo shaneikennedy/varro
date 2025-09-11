@@ -355,6 +355,12 @@ pub enum SearchOperator {
 }
 
 #[derive(Clone)]
+pub enum RankingType {
+    /// The basic TF-IDF algorithm
+    TFIDF,
+}
+
+#[derive(Clone)]
 pub struct SearchOptions {
     /// Whether or not to return the full document object in the search response.
     /// By default only the Document ID is returned to be used to fetch at a later time,
@@ -367,6 +373,10 @@ pub struct SearchOptions {
     /// higher. When search_operator is set to AND, varro.search("git docker") will only return
     /// documents with both terms appearing in the document. Default is SearchOperator::OR.
     search_operator: SearchOperator,
+
+    /// What algorithm to use when ranking documents that match the query. Default is TF-IDF
+    /// (term-frequency inverse-document-frequency)
+    ranking_type: RankingType,
 }
 
 impl Default for SearchOptions {
@@ -380,6 +390,7 @@ impl SearchOptions {
         SearchOptions {
             include_documents: false,
             search_operator: SearchOperator::OR,
+            ranking_type: RankingType::TFIDF,
         }
     }
 
@@ -390,6 +401,11 @@ impl SearchOptions {
 
     pub fn search_operator(&mut self, operator: SearchOperator) -> Self {
         self.search_operator = operator;
+        self.clone()
+    }
+
+    pub fn ranking_type(&mut self, ranking_type: RankingType) -> Self {
+        self.ranking_type = ranking_type;
         self.clone()
     }
 }
