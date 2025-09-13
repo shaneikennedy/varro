@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::ops::Add;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -30,6 +31,14 @@ use crate::segment::{DocumentSegment, Segment};
 pub struct Varro {
     /// Append only in-memory buffer before flushing to disk
     buffer: Mutex<Vec<JoinHandle<DocumentSegment>>>,
+
+    /// Internal counter for how big the buffer is for flushing purposes.
+    buffer_size: AtomicUsize,
+
+    /// Maximum buffer size, when the document buffer reaches this size in bytes
+    /// Varro will automatically flush the buffer to disk and these documents
+    /// will become searchable. Default is 50MB or 50_000_000.
+    max_buffer_size: Mutex<usize>,
 
     /// Segment compactor is the handle to the background thread that's
     /// compacting segments when they get too big
@@ -96,6 +105,8 @@ impl Varro {
 
         let varro = Varro {
             buffer: Mutex::new(Vec::new()),
+            buffer_size: AtomicUsize::new(0),
+            max_buffer_size: Mutex::new(50_000_000),
             stop,
             segment_compactor,
             manifest,
@@ -118,6 +129,13 @@ impl Varro {
         self
     }
 
+    /// Update the Varro instance with a new `max_buffer_size` to control when
+    /// Varro flushes automatically
+    pub fn with_max_buffer_size(self, size: usize) -> Self {
+        *self.max_buffer_size.lock().unwrap() = size;
+        self
+    }
+
     /// The total number of docs in the Varro index
     pub fn index_size(&self) -> usize {
         self.manifest.read().unwrap().total_docs
@@ -127,14 +145,17 @@ impl Varro {
     pub fn index(&self, doc: Document) -> Result<()> {
         // First things first get this thing written to disk
         self.write_doc(&doc)?;
+        self.buffer_size.fetch_add(doc.size(), Ordering::SeqCst);
 
         // Then add it to the varro buffer to be indexed
         let mut docs = self.buffer.lock().unwrap();
         let handle = thread::spawn(move || DocumentSegment::new(&doc));
         docs.push(handle);
 
-        // TODO automatically flush if the buffer hits a certain size, which is configurable
-
+        // Force a flush when the buffer size gets to the set max limit
+        if self.buffer_size.load(Ordering::SeqCst) > *self.max_buffer_size.lock().unwrap() {
+            self.flush()?;
+        }
         Ok(())
     }
 
@@ -311,6 +332,9 @@ impl Varro {
             total_tokens_for_flush += doc_seg.document_length();
             self.manifest.write().unwrap().total_docs += 1;
         }
+        // Reset the buffer size
+        self.buffer_size.swap(0, Ordering::SeqCst);
+
         let (segment_id, segment_size) = self.write_segment(&segment)?;
 
         // Update the manifest file

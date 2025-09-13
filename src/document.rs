@@ -69,4 +69,15 @@ impl Document {
     pub fn id(&self) -> String {
         self.id.clone()
     }
+
+    /// Return the number of bytes allocated by a document
+    pub fn size(&self) -> usize {
+        let mut size = self.id.len();
+        for field in self.fields.iter() {
+            size += field.name.len();
+            size += field.contents.len();
+            size += size_of_val(&field.index)
+        }
+        size
+    }
 }
