@@ -1,14 +1,13 @@
 use anyhow::{Context, Result};
 use log::info;
 use std::{
-    fs::{self, ReadDir},
+    fs::{self},
     path::{Path, PathBuf},
 };
 
 const MANIFEST_FILENAME: &str = "manifest.varro";
 
 pub(crate) trait FileSystem: Send + Sync {
-    fn read_dir_from_documents(&self) -> Result<ReadDir>;
     fn read_from_index(&self, filename: &Path) -> Result<Vec<u8>>;
     fn read_from_documents(&self, filename: &Path) -> Result<Vec<u8>>;
     fn read_from_manifest(&self) -> Result<Vec<u8>>;
@@ -42,11 +41,6 @@ impl LocalFileSystem {
         })
     }
 
-    fn read_dir(&self, path: &PathBuf) -> Result<ReadDir> {
-        let dir = fs::read_dir(path).with_context(|| "unable to read dir")?;
-        Ok(dir)
-    }
-
     fn read(&self, path: &PathBuf) -> Result<Vec<u8>> {
         let contents = fs::read(path).with_context(|| "unable to read file")?;
         Ok(contents)
@@ -73,10 +67,6 @@ impl FileSystem for LocalFileSystem {
 
     fn write_to_document(&self, filename: &Path, contents: Vec<u8>) -> Result<()> {
         self.write(&self.documents_path.join(filename), contents)
-    }
-
-    fn read_dir_from_documents(&self) -> Result<ReadDir> {
-        self.read_dir(&self.documents_path)
     }
 
     fn read_from_manifest(&self) -> Result<Vec<u8>> {

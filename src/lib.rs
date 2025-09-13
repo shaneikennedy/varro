@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 use std::ops::Add;
 use std::path::Path;
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering::SeqCst;
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -33,9 +31,6 @@ pub struct Varro {
     /// Append only in-memory buffer before flushing to disk
     buffer: Mutex<Vec<JoinHandle<DocumentSegment>>>,
 
-    /// Total documents in the index, used for IDF calculations
-    total_docs: AtomicUsize,
-
     /// Segment compactor is the handle to the background thread that's
     /// compacting segments when they get too big
     segment_compactor: Mutex<Option<JoinHandle<Result<()>>>>,
@@ -65,11 +60,6 @@ impl Varro {
         let filesystem = LocalFileSystem::new(path)?;
         let filesystem: Arc<Box<dyn FileSystem>> = Arc::new(Box::new(filesystem));
 
-        // For now we can be dumb and literally just count the files in the document_path
-        let total_docs = filesystem.read_dir_from_documents()?;
-        let total_docs = total_docs.count();
-        info!("Initializing with {total_docs} docs in the index.");
-
         // Read manifest file into memory if there is one.
         let contents = filesystem.read_from_manifest();
         let manifest = match contents {
@@ -84,6 +74,7 @@ impl Varro {
                 warn!("No manifest file found, starting a new one.");
                 Arc::new(RwLock::new(Manifest {
                     segments: HashMap::new(),
+                    total_docs: 0,
                 }))
             }
         };
@@ -104,7 +95,6 @@ impl Varro {
 
         let varro = Varro {
             buffer: Mutex::new(Vec::new()),
-            total_docs: AtomicUsize::new(total_docs),
             stop,
             segment_compactor,
             manifest,
@@ -129,7 +119,7 @@ impl Varro {
 
     /// The total number of docs in the Varro index
     pub fn index_size(&self) -> usize {
-        self.total_docs.load(SeqCst)
+        self.manifest.read().unwrap().total_docs
     }
 
     /// Index a document, this takes a Document, stores it, adds the index to the document buffer, and returns whether it was successfull or not
@@ -194,7 +184,8 @@ impl Varro {
 
         let mut matching_docs: HashMap<Document, Score> = HashMap::new();
         let mut matching_docs_for_token: HashMap<String, Vec<(Document, Score)>> = HashMap::new();
-        debug!("Total docs in index: {}", self.total_docs.load(SeqCst));
+        let total_docs = self.manifest.read().unwrap().total_docs;
+        debug!("Total docs in index: {total_docs}");
         let opts = options.unwrap_or_default();
         // Collect a map of terms to docs for which the term appears, and it's tfidf score
         for token in tokens {
@@ -204,7 +195,7 @@ impl Varro {
                 tfdf.term_freq.iter().for_each(|(doc_id, tf)| {
                     let score = ranking::score(
                         *tf,
-                        self.total_docs.load(SeqCst) as i32,
+                        total_docs as i32,
                         docs_with_term as i32,
                         &opts.ranking_type,
                     );
@@ -304,9 +295,7 @@ impl Varro {
             }
             let doc_seg = doc_seg.unwrap();
             segment.add_docucment_segment(&doc_seg);
-
-            // TODO: this wraps around on overflow
-            self.total_docs.fetch_add(1, SeqCst);
+            self.manifest.write().unwrap().total_docs += 1;
         }
         let (segment_id, segment_size) = self.write_segment(&segment)?;
 
