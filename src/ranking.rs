@@ -44,3 +44,22 @@ pub(crate) fn score(
         }
     }
 }
+
+#[cfg(test)]
+mod ranking_tests {
+    use super::*;
+
+    #[test]
+    fn test_tfidf() {
+        let score = score(20.0, 200, 6, 2000, 1100.0, &RankingType::Tfidf);
+
+        assert_eq!(score, 30.45757490560675);
+    }
+
+    #[test]
+    fn test_bm25() {
+        let score = score(20.0, 200, 6, 2000, 1100.0, &RankingType::Bm25);
+
+        assert_eq!(score, 6.882914719768845);
+    }
+}
