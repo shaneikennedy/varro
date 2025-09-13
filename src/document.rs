@@ -5,7 +5,7 @@ use bincode::{Decode, Encode};
 use uuid::Uuid;
 
 /// The model representing a field in a document
-#[derive(PartialEq, Eq, Hash, Encode, Decode)]
+#[derive(PartialEq, Eq, Hash, Encode, Decode, Clone)]
 pub struct Field {
     name: String,
     contents: String,
@@ -22,7 +22,7 @@ impl Field {
 }
 
 /// The model representing a document that has been indexed by Varro
-#[derive(PartialEq, Eq, Encode, Decode)]
+#[derive(PartialEq, Eq, Encode, Decode, Clone)]
 pub struct Document {
     id: String,
 
