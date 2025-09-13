@@ -19,11 +19,11 @@ mod segment;
 mod tokens;
 
 pub use document::{Document, Field};
+pub use ranking::RankingType;
 
 use crate::compaction::SegmentCompactor;
 use crate::filesystem::{FileSystem, LocalFileSystem};
 use crate::manifest::{Manifest, SegmentId};
-use crate::ranking::RankingType;
 use crate::segment::{DocumentSegment, Segment};
 
 /// The model for indexing, querying and retrieveing documents
@@ -185,7 +185,9 @@ impl Varro {
 
         let mut matching_docs: HashMap<Document, Score> = HashMap::new();
         let mut matching_docs_for_token: HashMap<String, Vec<(Document, Score)>> = HashMap::new();
-        let total_docs = self.manifest.read().unwrap().total_docs;
+        let manifest_guard = self.manifest.read().unwrap();
+        let total_docs = manifest_guard.total_docs;
+        let average_doc_length = manifest_guard.average_document_length;
         debug!("Total docs in index: {total_docs}");
         let opts = options.unwrap_or_default();
         // Collect a map of terms to docs for which the term appears, and it's tfidf score
@@ -194,10 +196,16 @@ impl Varro {
                 let docs_with_term = tfdf.term_freq.len();
                 debug!("Total docs for term {token}: {docs_with_term}");
                 tfdf.term_freq.iter().for_each(|(doc_id, tf)| {
+                    // TODO better way to quickly get the stats of a doc (like length)
+                    let document_length =
+                        DocumentSegment::new(&self.get_doc_by_id(doc_id.to_string()).unwrap())
+                            .document_length();
                     let score = ranking::score(
                         *tf,
                         total_docs as i32,
                         docs_with_term as i32,
+                        document_length,
+                        average_doc_length,
                         &opts.ranking_type,
                     );
                     matching_docs_for_token
