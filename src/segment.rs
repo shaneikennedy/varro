@@ -109,6 +109,10 @@ impl DocumentSegment {
     pub fn document_id(&self) -> String {
         self.document_id.clone()
     }
+
+    pub fn document_length(&self) -> i32 {
+        self.document_length
+    }
 }
 
 #[cfg(test)]

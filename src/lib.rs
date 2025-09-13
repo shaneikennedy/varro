@@ -75,6 +75,7 @@ impl Varro {
                 Arc::new(RwLock::new(Manifest {
                     segments: HashMap::new(),
                     total_docs: 0,
+                    average_document_length: 0.0,
                 }))
             }
         };
@@ -287,6 +288,8 @@ impl Varro {
     pub fn flush(&self) -> Result<()> {
         let mut segment = Segment::new();
         let mut docs = self.buffer.lock().unwrap();
+        let mut total_tokens_for_flush = 0;
+        let total_docs_for_flush = docs.len();
         for doc_seg in docs.drain(0..) {
             let doc_seg = doc_seg.join();
             if doc_seg.is_err() {
@@ -295,6 +298,9 @@ impl Varro {
             }
             let doc_seg = doc_seg.unwrap();
             segment.add_docucment_segment(&doc_seg);
+
+            // Record the total number of tokens for this doc
+            total_tokens_for_flush += doc_seg.document_length();
             self.manifest.write().unwrap().total_docs += 1;
         }
         let (segment_id, segment_size) = self.write_segment(&segment)?;
@@ -305,6 +311,10 @@ impl Varro {
         manifest_guard
             .segments
             .insert(segment_id.clone(), segment_size);
+        manifest_guard.average_document_length = (manifest_guard.total_docs as f64
+            * manifest_guard.average_document_length
+            + total_tokens_for_flush as f64)
+            / (manifest_guard.total_docs + total_docs_for_flush) as f64;
         debug!(
             "Manifest object now contains segments: {:#?}",
             manifest_guard.segments

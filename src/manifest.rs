@@ -11,4 +11,7 @@ pub(crate) struct Manifest {
 
     /// The total number of docs in the index.
     pub total_docs: usize,
+
+    /// Average document length in the index.
+    pub average_document_length: f64,
 }
