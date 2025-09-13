@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 use std::ops::Add;
 use std::path::Path;
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering::SeqCst;
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -16,10 +14,12 @@ mod compaction;
 pub mod document;
 mod filesystem;
 mod manifest;
+mod ranking;
 mod segment;
 mod tokens;
 
 pub use document::{Document, Field};
+pub use ranking::RankingType;
 
 use crate::compaction::SegmentCompactor;
 use crate::filesystem::{FileSystem, LocalFileSystem};
@@ -30,9 +30,6 @@ use crate::segment::{DocumentSegment, Segment};
 pub struct Varro {
     /// Append only in-memory buffer before flushing to disk
     buffer: Mutex<Vec<JoinHandle<DocumentSegment>>>,
-
-    /// Total documents in the index, used for IDF calculations
-    total_docs: AtomicUsize,
 
     /// Segment compactor is the handle to the background thread that's
     /// compacting segments when they get too big
@@ -63,11 +60,6 @@ impl Varro {
         let filesystem = LocalFileSystem::new(path)?;
         let filesystem: Arc<Box<dyn FileSystem>> = Arc::new(Box::new(filesystem));
 
-        // For now we can be dumb and literally just count the files in the document_path
-        let total_docs = filesystem.read_dir_from_documents()?;
-        let total_docs = total_docs.count();
-        info!("Initializing with {total_docs} docs in the index.");
-
         // Read manifest file into memory if there is one.
         let contents = filesystem.read_from_manifest();
         let manifest = match contents {
@@ -82,6 +74,8 @@ impl Varro {
                 warn!("No manifest file found, starting a new one.");
                 Arc::new(RwLock::new(Manifest {
                     segments: HashMap::new(),
+                    total_docs: 0,
+                    average_document_length: 0.0,
                 }))
             }
         };
@@ -102,7 +96,6 @@ impl Varro {
 
         let varro = Varro {
             buffer: Mutex::new(Vec::new()),
-            total_docs: AtomicUsize::new(total_docs),
             stop,
             segment_compactor,
             manifest,
@@ -127,7 +120,7 @@ impl Varro {
 
     /// The total number of docs in the Varro index
     pub fn index_size(&self) -> usize {
-        self.total_docs.load(SeqCst)
+        self.manifest.read().unwrap().total_docs
     }
 
     /// Index a document, this takes a Document, stores it, adds the index to the document buffer, and returns whether it was successfull or not
@@ -192,7 +185,10 @@ impl Varro {
 
         let mut matching_docs: HashMap<Document, Score> = HashMap::new();
         let mut matching_docs_for_token: HashMap<String, Vec<(Document, Score)>> = HashMap::new();
-        debug!("Total docs in index: {}", self.total_docs.load(SeqCst));
+        let manifest_guard = self.manifest.read().unwrap();
+        let total_docs = manifest_guard.total_docs;
+        let average_doc_length = manifest_guard.average_document_length;
+        debug!("Total docs in index: {total_docs}");
         let opts = options.unwrap_or_default();
         // Collect a map of terms to docs for which the term appears, and it's tfidf score
         for token in tokens {
@@ -200,13 +196,22 @@ impl Varro {
                 let docs_with_term = tfdf.term_freq.len();
                 debug!("Total docs for term {token}: {docs_with_term}");
                 tfdf.term_freq.iter().for_each(|(doc_id, tf)| {
-                    let idf =
-                        (self.total_docs.load(SeqCst) as f64 / docs_with_term as f64).log(10.0);
-                    let tfidf = tf * idf;
+                    // TODO better way to quickly get the stats of a doc (like length)
+                    let document_length =
+                        DocumentSegment::new(&self.get_doc_by_id(doc_id.to_string()).unwrap())
+                            .document_length();
+                    let score = ranking::score(
+                        *tf,
+                        total_docs as i32,
+                        docs_with_term as i32,
+                        document_length,
+                        average_doc_length,
+                        &opts.ranking_type,
+                    );
                     matching_docs_for_token
                         .entry(token.clone())
-                        .and_modify(|vec| vec.push((Document::new(doc_id.to_string()), tfidf)))
-                        .or_insert(vec![(Document::new(doc_id.to_string()), tfidf)]);
+                        .and_modify(|vec| vec.push((Document::new(doc_id.to_string()), score)))
+                        .or_insert(vec![(Document::new(doc_id.to_string()), score)]);
                 });
             } else {
                 debug!("No docs for term {token}");
@@ -291,6 +296,8 @@ impl Varro {
     pub fn flush(&self) -> Result<()> {
         let mut segment = Segment::new();
         let mut docs = self.buffer.lock().unwrap();
+        let mut total_tokens_for_flush = 0;
+        let total_docs_for_flush = docs.len();
         for doc_seg in docs.drain(0..) {
             let doc_seg = doc_seg.join();
             if doc_seg.is_err() {
@@ -300,8 +307,9 @@ impl Varro {
             let doc_seg = doc_seg.unwrap();
             segment.add_docucment_segment(&doc_seg);
 
-            // TODO: this wraps around on overflow
-            self.total_docs.fetch_add(1, SeqCst);
+            // Record the total number of tokens for this doc
+            total_tokens_for_flush += doc_seg.document_length();
+            self.manifest.write().unwrap().total_docs += 1;
         }
         let (segment_id, segment_size) = self.write_segment(&segment)?;
 
@@ -311,6 +319,10 @@ impl Varro {
         manifest_guard
             .segments
             .insert(segment_id.clone(), segment_size);
+        manifest_guard.average_document_length = (manifest_guard.total_docs as f64
+            * manifest_guard.average_document_length
+            + total_tokens_for_flush as f64)
+            / (manifest_guard.total_docs + total_docs_for_flush) as f64;
         debug!(
             "Manifest object now contains segments: {:#?}",
             manifest_guard.segments
@@ -355,12 +367,6 @@ pub enum SearchOperator {
 }
 
 #[derive(Clone)]
-pub enum RankingType {
-    /// The basic TF-IDF algorithm
-    TFIDF,
-}
-
-#[derive(Clone)]
 pub struct SearchOptions {
     /// Whether or not to return the full document object in the search response.
     /// By default only the Document ID is returned to be used to fetch at a later time,
@@ -390,7 +396,7 @@ impl SearchOptions {
         SearchOptions {
             include_documents: false,
             search_operator: SearchOperator::OR,
-            ranking_type: RankingType::TFIDF,
+            ranking_type: RankingType::Tfidf,
         }
     }
 
