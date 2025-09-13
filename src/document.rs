@@ -13,6 +13,14 @@ pub struct Field {
 }
 
 impl Field {
+    pub fn new(name: &str, contents: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            contents: contents.to_string(),
+            index: false,
+        }
+    }
+
     pub fn name(&self) -> String {
         self.name.clone()
     }
