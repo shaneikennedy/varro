@@ -4,62 +4,22 @@ use std::time::Duration;
 use pyo3::prelude::*;
 use varro::Varro;
 
+use crate::document::Document;
+use crate::search::SearchOptions;
+mod document;
+mod search;
+
 #[pyclass]
 pub struct PyVarro {
     varro: Varro,
 }
 
-#[pyclass]
-#[derive(Clone)]
-pub struct Document {
-    doc: varro::Document,
-}
-
-#[pymethods]
-impl Document {
-    #[new]
-    pub fn new(id: String) -> Self {
-        Self {
-            doc: varro::Document::new(id),
-        }
-    }
-
-    /// Add a field to the document
-    pub fn add_field(&mut self, name: String, contents: String, index: bool) {
-        self.doc.add_field(name, contents, index);
-    }
-
-    /// Return the number of bytes allocated by a document
-    pub fn size(&self) -> usize {
-        self.doc.size()
-    }
-}
-
-/// The model representing a field in a document
-#[pyclass]
-#[derive(Clone)]
-pub struct Field {
-    field: varro::Field,
-}
-
-#[pymethods]
-impl Field {
-    #[new]
-    pub fn new(name: &str, contents: &str) -> PyResult<Field> {
-        Ok(Field {
-            field: varro::Field::new(name, contents),
-        })
-    }
-    pub fn name(&self) -> String {
-        self.field.name()
-    }
-    pub fn contents(&self) -> String {
-        self.field.contents()
-    }
-}
-
 #[pymethods]
 impl PyVarro {
+    /// Create a new instance of Varro
+    /// `min_segment_size` is used to control compaction, it determines how big the segment files should be
+    /// `compaction_frequency` controls how often compaction should happen
+    /// `max_buffer_size` controls when Varro will automatically trigger a flush
     #[new]
     pub fn new(
         min_segment_size: Option<usize>,
@@ -95,4 +55,26 @@ impl PyVarro {
         self.varro.flush().unwrap();
         Ok(())
     }
+
+    /// Retrive a document by it's Document.id, returns an Option type wrapping a Document
+    pub fn retrieve(&self, id: String) -> Option<Document> {
+        let result = self.varro.retrieve(id)?;
+        let doc = Document::new(result.id());
+        // TODO populate the other fields
+        Some(doc)
+    }
+
+    /// Text search, given an input string query the index and return a list of Document Ids
+    /// and their corresponding TDIDF score (higher is better) that match the search
+    pub fn search(&self, query: String, _options: Option<SearchOptions>) -> Vec<(Document, Score)> {
+        // TODO actually translate to the varro search opts from the pyvarro ones
+        let search_options = varro::SearchOptions::new();
+        self.varro
+            .search(query, Some(search_options))
+            // TODO actually translate doc to PyVarro Doc
+            .map(|(doc, score)| (Document::new(doc.id()), score))
+            .collect()
+    }
 }
+
+pub type Score = f64;
