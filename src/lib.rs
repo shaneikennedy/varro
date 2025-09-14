@@ -424,18 +424,30 @@ impl SearchOptions {
         }
     }
 
-    pub fn include_documents(&mut self, include_documents: bool) -> Self {
+    pub fn with_include_documents(&mut self, include_documents: bool) -> Self {
         self.include_documents = include_documents;
         self.clone()
     }
 
-    pub fn search_operator(&mut self, operator: SearchOperator) -> Self {
+    pub fn include_documents(&self) -> bool {
+        self.include_documents
+    }
+
+    pub fn with_search_operator(&mut self, operator: SearchOperator) -> Self {
         self.search_operator = operator;
         self.clone()
     }
 
-    pub fn ranking_type(&mut self, ranking_type: RankingType) -> Self {
+    pub fn search_operator(&self) -> SearchOperator {
+        self.search_operator.clone()
+    }
+
+    pub fn with_ranking_type(&mut self, ranking_type: RankingType) -> Self {
         self.ranking_type = ranking_type;
         self.clone()
+    }
+
+    pub fn ranking_type(&self) -> RankingType {
+        self.ranking_type.clone()
     }
 }

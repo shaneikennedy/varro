@@ -14,8 +14,8 @@ fn main() -> Result<()> {
         warn!("There are no documents in the index, try running the ingest exmaple first");
     }
     let opts = SearchOptions::new()
-        .include_documents(true)
-        .search_operator(SearchOperator::AND);
+        .with_include_documents(true)
+        .with_search_operator(SearchOperator::AND);
     let results = search_engine.search("git gorilla".into(), Some(opts));
     assert_eq!(
         results.count(),
