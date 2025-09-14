@@ -26,6 +26,16 @@ impl Document {
     }
 }
 
+impl From<varro::Document> for Document {
+    fn from(value: varro::Document) -> Self {
+        let mut doc = Document::new(value.id());
+        for field in value.fields() {
+            doc.add_field(field.name(), field.contents(), false);
+        }
+        doc
+    }
+}
+
 /// The model representing a field in a document
 #[pyclass]
 #[derive(Clone)]

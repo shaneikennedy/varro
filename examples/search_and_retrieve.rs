@@ -13,7 +13,7 @@ fn main() -> Result<()> {
     if search_engine.index_size() == 0 {
         warn!("There are no documents in the index, try running the ingest exmaple first");
     }
-    let opts = SearchOptions::new().include_documents(true);
+    let opts = SearchOptions::new().with_include_documents(true);
     let results = search_engine.search("git and commit".into(), Some(opts));
     for (doc, score) in results {
         info!("Doc: {} with a score of: {}", doc.id(), score);
