@@ -12,6 +12,6 @@ Varro is a text-based search engine inspired by Apache Lucene, attempting to off
 - [x] Segment compaction and cleanup
 - [ ] Indexing token positions in documents
 - [ ] Compile to wasm and have full in-browser search engine
-- [ ] PyO3 packaging for python
+- [x] PyO3 packaging for python
 - [ ] Agent with codebase indexed and varro tool call for codesearch instead of grep/ripgrep
 - [ ] S3-compatible backend option for real durability
