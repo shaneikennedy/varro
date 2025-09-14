@@ -179,10 +179,13 @@ impl Varro {
         let tokens = tokens::tokenize(query.as_str());
 
         // Get all the segment files and load them into memory, merging them all into a master segment
-        let segment_files = &self.manifest.read().unwrap().segments;
+        let manifest_guard = self.manifest.read().unwrap();
         let mut master_segment = Segment::new();
-        debug!("Searching through segment files: {:#?}", segment_files);
-        for f in segment_files.keys() {
+        debug!(
+            "Searching through segment files: {:#?}",
+            manifest_guard.segments.keys()
+        );
+        for f in manifest_guard.segments.keys() {
             let segment_file = format!("{f}.seg");
             let contents = self.filesystem.read_from_index(Path::new(&segment_file));
             let segment = match contents {
@@ -203,6 +206,7 @@ impl Varro {
                 None => warn!("Unable to read segment file {:#?}", segment_file),
             }
         }
+        drop(manifest_guard);
 
         let mut matching_docs: HashMap<Document, Score> = HashMap::new();
         let mut matching_docs_for_token: HashMap<String, Vec<(Document, Score)>> = HashMap::new();
@@ -212,6 +216,7 @@ impl Varro {
         debug!("Total docs in index: {total_docs}");
         let opts = options.unwrap_or_default();
         // Collect a map of terms to docs for which the term appears, and it's tfidf score
+        drop(manifest_guard);
         for token in tokens {
             if let Some(tfdf) = master_segment.term_index.get(&token) {
                 let docs_with_term = tfdf.term_freq.len();
