@@ -59,20 +59,16 @@ impl PyVarro {
     /// Retrive a document by it's Document.id, returns an Option type wrapping a Document
     pub fn retrieve(&self, id: String) -> Option<Document> {
         let result = self.varro.retrieve(id)?;
-        let doc = Document::new(result.id());
-        // TODO populate the other fields
-        Some(doc)
+        Some(result.into())
     }
 
     /// Text search, given an input string query the index and return a list of Document Ids
     /// and their corresponding TDIDF score (higher is better) that match the search
-    pub fn search(&self, query: String, _options: Option<SearchOptions>) -> Vec<(Document, Score)> {
-        // TODO actually translate to the varro search opts from the pyvarro ones
-        let search_options = varro::SearchOptions::new();
+    pub fn search(&self, query: String, options: Option<SearchOptions>) -> Vec<(Document, Score)> {
+        let search_options = options.unwrap_or(SearchOptions::new(None, None, None));
         self.varro
-            .search(query, Some(search_options))
-            // TODO actually translate doc to PyVarro Doc
-            .map(|(doc, score)| (Document::new(doc.id()), score))
+            .search(query, Some(search_options.into()))
+            .map(|(doc, score)| (doc.into(), score))
             .collect()
     }
 }

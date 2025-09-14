@@ -14,8 +14,8 @@ fn main() -> Result<()> {
         warn!("There are no documents in the index, try running the ingest exmaple first");
     }
     let opts = SearchOptions::new()
-        .include_documents(true)
-        .ranking_type(RankingType::Bm25);
+        .with_include_documents(true)
+        .with_ranking_type(RankingType::Bm25);
     let results = search_engine.search("git and commit".into(), Some(opts));
     for (doc, score) in results {
         info!("Doc: {} with a score of: {}", doc.id(), score);
