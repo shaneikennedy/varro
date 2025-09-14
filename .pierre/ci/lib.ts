@@ -1,7 +1,7 @@
 import { run } from 'pierre';
 
 export default async () => {
-  const cwd = "pyvarro";
+  const cwd = "lib";
   await run(`apt update -y && apt install -y build-essential`)
   await run(`cargo build`, { cwd });
   await run(`cargo test`, { cwd });
