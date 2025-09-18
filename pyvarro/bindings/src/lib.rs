@@ -1,4 +1,5 @@
 #[pyo3::pymodule]
+#[pyo3(name = "lib")]
 mod pyvarro {
     use pyo3::prelude::*;
     use std::path::Path;
