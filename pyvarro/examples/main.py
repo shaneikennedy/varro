@@ -1,10 +1,10 @@
 import os
 import uuid
-import pyvarro
+from pyvarro import PyVarro, Document
 
 def main():
-    varro = pyvarro.PyVarro(None, None, None)
-    directory_path = "../documents"
+    varro = PyVarro(None, None, None)
+    directory_path = "../../lib/documents"
     try:
         # Check if directory exists
         if not os.path.isdir(directory_path):
@@ -20,7 +20,7 @@ def main():
                     # Add docs to index
                     with open(file_path, 'r', encoding='utf-8') as file:
                         contents = file.read()
-                        doc = pyvarro.Document(str(uuid.uuid4()))
+                        doc = Document(str(uuid.uuid4()))
                         doc.add_field("name", "document", False)
                         doc.add_field("content", contents, False)
                         varro.index(doc)
