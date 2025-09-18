@@ -1,8 +1,10 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, path::Path};
 
-use bincode::{Decode, Encode};
+use anyhow::Result;
+use bincode::{Decode, Encode, config};
+use uuid::Uuid;
 
-use crate::{document, tokens};
+use crate::{document, filesystem::FileSystem, manifest::SegmentId, tokens};
 
 /// A Segment is just a map of terms to TFDFs for a given "flush".
 #[derive(Encode, Decode, Debug)]
@@ -45,6 +47,17 @@ impl Segment {
                 })
                 .or_insert(tfdf);
         }
+    }
+
+    pub fn write_to_fs(&self, filesystem: &dyn FileSystem) -> Result<(SegmentId, usize)> {
+        let config = config::standard();
+        let bytes = bincode::encode_to_vec(self, config)?;
+        let segment_id = Uuid::new_v4().to_string();
+        filesystem.write_to_index(
+            Path::new(&format!("{}.seg", segment_id.clone())),
+            bytes.clone(),
+        )?;
+        Ok((segment_id, bytes.len()))
     }
 }
 

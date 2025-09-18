@@ -7,6 +7,7 @@ edition = "2024"
 anyhow = "1.0.98"
 bincode = "2.0.1"
 log = "0.4.27"
+tempdir = "0.3.7"
 uuid = { version = "1.17.0", features = ["v4"] }
 
 [dev-dependencies]

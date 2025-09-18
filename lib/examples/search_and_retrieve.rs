@@ -9,7 +9,7 @@ fn main() -> Result<()> {
         .filter_level(LevelFilter::Debug)
         .init();
 
-    let search_engine = Varro::new(Path::new("./.index"))?;
+    let search_engine = Varro::new(Path::new("./.index"), varro::FileSystemType::Local)?;
     if search_engine.index_size() == 0 {
         warn!("There are no documents in the index, try running the ingest exmaple first");
     }

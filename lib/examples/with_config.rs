@@ -1,13 +1,13 @@
 use std::{path::Path, time::Duration};
 
 use log::LevelFilter;
-use varro::Varro;
+use varro::{FileSystemType, Varro};
 
 fn main() {
     env_logger::builder()
         .filter_level(LevelFilter::Debug)
         .init();
-    Varro::new(Path::new(".index"))
+    Varro::new(Path::new(".index"), FileSystemType::Local)
         .unwrap()
         .with_min_segment_size(1_000_000_000_000) // 1TB segments
         .with_max_buffer_size(1_000_000_000) // Flush when buffer his 1GB
