@@ -8,7 +8,7 @@ anyhow = "1.0.98"
 bincode = "2.0.1"
 log = "0.4.27"
 rust-s3 = { version = "0.37.0", default-features = false, features = ["blocking", "sync-native-tls"], optional = true }
-tempdir = "0.3.7"
+tempfile = "3.22.0"
 uuid = { version = "1.17.0", features = ["v4"] }
 
 [features]

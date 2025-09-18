@@ -3,11 +3,10 @@ use log::info;
 #[cfg(feature = "s3")]
 use s3::{Bucket, creds::Credentials};
 use std::{
-    env::temp_dir,
-    fs::{self},
+    fs,
     path::{Path, PathBuf},
 };
-use tempdir::TempDir;
+use tempfile::TempDir;
 
 const MANIFEST_FILENAME: &str = "manifest.varro";
 
@@ -95,8 +94,8 @@ pub(crate) struct TempFileSystem {
 }
 
 impl TempFileSystem {
-    pub fn new() -> Result<Self> {
-        let temp_dir = TempDir::new(temp_dir().to_str().unwrap())?;
+    pub fn new(path: Option<&Path>) -> Result<Self> {
+        let temp_dir = tempfile::Builder::new().tempdir_in(path.unwrap_or(Path::new("./")))?;
         let path = temp_dir.path();
         Ok(Self {
             index_path: path.to_path_buf(),
@@ -230,7 +229,7 @@ mod filesystem_temp_tests {
 
     #[test]
     fn test_is_temporary() {
-        let fs = TempFileSystem::new().unwrap();
+        let fs = TempFileSystem::new(None).unwrap();
         let path = fs.index_path();
         assert!(Path::exists(&path));
         drop(fs);

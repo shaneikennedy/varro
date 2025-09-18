@@ -76,7 +76,7 @@ impl Varro {
     pub fn new(path: &Path, file_system_type: FileSystemType) -> Result<Varro> {
         let filesystem: Box<dyn FileSystem> = match file_system_type {
             FileSystemType::Local => Box::new(LocalFileSystem::new(path)?),
-            FileSystemType::Temp => Box::new(TempFileSystem::new()?),
+            FileSystemType::Temp => Box::new(TempFileSystem::new(Some(path))?),
             #[cfg(feature = "s3")]
             FileSystemType::S3 => Box::new(S3FileSystem::new(path)?),
         };
