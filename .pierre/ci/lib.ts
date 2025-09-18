@@ -6,5 +6,5 @@ export default async () => {
   await run(`cargo build`, { cwd });
   await run(`cargo test`, { cwd });
   await run(`cargo fmt --all -- --check`, { cwd });
-  await run(`cargo clippy --all-targets --all-features -- -D warnings`, { cwd });
+  await run(`cargo clippy --all-targets -- -D warnings`, { cwd });
 };

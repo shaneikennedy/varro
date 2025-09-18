@@ -22,6 +22,8 @@ pub use document::{Document, Field};
 pub use ranking::RankingType;
 
 use crate::compaction::SegmentCompactor;
+#[cfg(feature = "s3")]
+use crate::filesystem::S3FileSystem;
 use crate::filesystem::{FileSystem, LocalFileSystem, TempFileSystem};
 use crate::manifest::Manifest;
 use crate::segment::{DocumentSegment, Segment};
@@ -65,6 +67,8 @@ pub struct Varro {
 pub enum FileSystemType {
     Local,
     Temp,
+    #[cfg(feature = "s3")]
+    S3,
 }
 
 impl Varro {
@@ -72,7 +76,9 @@ impl Varro {
     pub fn new(path: &Path, file_system_type: FileSystemType) -> Result<Varro> {
         let filesystem: Box<dyn FileSystem> = match file_system_type {
             FileSystemType::Local => Box::new(LocalFileSystem::new(path)?),
-            FileSystemType::Temp => Box::new(TempFileSystem::new()?),
+            FileSystemType::Temp => Box::new(TempFileSystem::new(Some(path))?),
+            #[cfg(feature = "s3")]
+            FileSystemType::S3 => Box::new(S3FileSystem::new(path)?),
         };
         let filesystem: Arc<Box<dyn FileSystem>> = Arc::new(filesystem);
 

@@ -1,7 +1,7 @@
 use wasm_bindgen::prelude::*;
 use std::path::Path;
 use std::time::Duration;
-use varro::Varro;
+use varro::{FileSystemType, Varro};
 
 #[wasm_bindgen]
 #[derive(Clone)]
@@ -146,7 +146,7 @@ impl VarroJS {
         compaction_frequency_millis: Option<u64>,
         max_buffer_size: Option<usize>,
     ) -> VarroJS {
-        let mut varro = Varro::new(Path::new(".index")).unwrap();
+        let mut varro = Varro::new(Path::new(".index"), FileSystemType::Local).unwrap();
         if let Some(min_segment_size) = min_segment_size {
             varro = varro.with_min_segment_size(min_segment_size);
         }
