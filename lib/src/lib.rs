@@ -340,7 +340,8 @@ impl Varro {
         // Reset the buffer size
         self.buffer_size.swap(0, Ordering::SeqCst);
 
-        let (segment_id, segment_size) = self.write_segment(&segment)?;
+        debug!("Writting new segmenet to disk");
+        let (segment_id, segment_size) = segment.write_to_fs(&**self.filesystem)?;
 
         // Update the manifest file
         debug!("Start update manifest file");
@@ -361,17 +362,6 @@ impl Varro {
         let manifest_guard = self.manifest.read().unwrap();
         let bytes = bincode::encode_to_vec(&*manifest_guard, config)?;
         self.filesystem.write_to_manifest(bytes)
-    }
-
-    fn write_segment(&self, seg: &Segment) -> Result<(SegmentId, usize)> {
-        let config = config::standard();
-        let bytes = bincode::encode_to_vec(seg, config)?;
-        let segment_id = Uuid::new_v4().to_string();
-        self.filesystem.write_to_index(
-            Path::new(&format!("{}.seg", segment_id.clone())),
-            bytes.clone(),
-        )?;
-        Ok((segment_id, bytes.len()))
     }
 }
 
