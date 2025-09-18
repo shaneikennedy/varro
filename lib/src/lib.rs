@@ -468,4 +468,38 @@ mod varro_tests {
     fn test_new() {
         Varro::new(Path::new(""), FileSystemType::Temp).unwrap();
     }
+
+    #[test]
+    fn test_index() -> Result<()> {
+        let index = Varro::new(Path::new(""), FileSystemType::Temp).unwrap();
+        let mut doc = Document::default();
+        doc.add_field("name".into(), "varro testing".into(), false);
+        index.index(doc)?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_flush() -> Result<()> {
+        let index = Varro::new(Path::new(""), FileSystemType::Temp).unwrap();
+        let mut doc = Document::default();
+        doc.add_field("name".into(), "varro testing".into(), false);
+        index.index(doc.clone()).unwrap();
+        index.flush()?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_search() -> Result<()> {
+        let index = Varro::new(Path::new(""), FileSystemType::Temp).unwrap();
+        let mut doc = Document::default();
+        doc.add_field("name".into(), "varro testing".into(), false);
+        index.index(doc.clone()).unwrap();
+        index.flush()?;
+
+        let results = index.search("varro".into(), None);
+        let results: Vec<(Document, Score)> = results.collect();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results.first().unwrap().0.id(), doc.id());
+        Ok(())
+    }
 }

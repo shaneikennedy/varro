@@ -97,9 +97,11 @@ impl TempFileSystem {
     pub fn new(path: Option<&Path>) -> Result<Self> {
         let temp_dir = tempfile::Builder::new().tempdir_in(path.unwrap_or(Path::new("./")))?;
         let path = temp_dir.path();
+        let documents_path = path.join("documents");
+        fs::create_dir(documents_path.clone())?;
         Ok(Self {
             index_path: path.to_path_buf(),
-            documents_path: path.join("documents"),
+            documents_path,
             _temp_dir: temp_dir,
         })
     }
@@ -232,6 +234,7 @@ mod filesystem_temp_tests {
         let fs = TempFileSystem::new(None).unwrap();
         let path = fs.index_path();
         assert!(Path::exists(&path));
+        assert!(Path::exists(&path.join("documents")));
         drop(fs);
         assert!(!Path::exists(&path));
     }
