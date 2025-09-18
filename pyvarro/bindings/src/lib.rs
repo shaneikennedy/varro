@@ -4,7 +4,7 @@ mod pyvarro {
     use pyo3::prelude::*;
     use std::path::Path;
     use std::time::Duration;
-    use varro::Varro;
+    use varro::{FileSystemType, Varro};
 
     #[pyclass]
     #[derive(Clone)]
@@ -149,7 +149,7 @@ mod pyvarro {
             compaction_frequency: Option<Duration>,
             max_buffer_size: Option<usize>,
         ) -> PyResult<PyVarro> {
-            let mut varro = Varro::new(Path::new(".index")).unwrap();
+            let mut varro = Varro::new(Path::new(".index"), FileSystemType::Local).unwrap();
             if let Some(min_segment_size) = min_segment_size {
                 varro = varro.with_min_segment_size(min_segment_size);
             }

@@ -2,14 +2,14 @@ use std::path::Path;
 
 use anyhow::Result;
 use log::{LevelFilter, warn};
-use varro::{SearchOperator, SearchOptions, Varro};
+use varro::{FileSystemType, SearchOperator, SearchOptions, Varro};
 
 fn main() -> Result<()> {
     env_logger::builder()
         .filter_level(LevelFilter::Debug)
         .init();
 
-    let search_engine = Varro::new(Path::new("./.index"))?;
+    let search_engine = Varro::new(Path::new("./.index"), FileSystemType::Local)?;
     if search_engine.index_size() == 0 {
         warn!("There are no documents in the index, try running the ingest exmaple first");
     }

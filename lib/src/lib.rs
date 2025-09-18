@@ -9,7 +9,6 @@ use std::time::Duration;
 use anyhow::{Error, Result};
 use bincode::config;
 use log::{debug, error, info, warn};
-use uuid::Uuid;
 
 mod compaction;
 pub mod document;
@@ -23,8 +22,8 @@ pub use document::{Document, Field};
 pub use ranking::RankingType;
 
 use crate::compaction::SegmentCompactor;
-use crate::filesystem::{FileSystem, LocalFileSystem};
-use crate::manifest::{Manifest, SegmentId};
+use crate::filesystem::{FileSystem, LocalFileSystem, TempFileSystem};
+use crate::manifest::Manifest;
 use crate::segment::{DocumentSegment, Segment};
 
 /// The model for indexing, querying and retrieveing documents
@@ -63,11 +62,19 @@ pub struct Varro {
     filesystem: Arc<Box<dyn FileSystem>>,
 }
 
+pub enum FileSystemType {
+    Local,
+    Temp,
+}
+
 impl Varro {
     /// Contruct a new instance of Varro
-    pub fn new(path: &Path) -> Result<Varro> {
-        let filesystem = LocalFileSystem::new(path)?;
-        let filesystem: Arc<Box<dyn FileSystem>> = Arc::new(Box::new(filesystem));
+    pub fn new(path: &Path, file_system_type: FileSystemType) -> Result<Varro> {
+        let filesystem: Box<dyn FileSystem> = match file_system_type {
+            FileSystemType::Local => Box::new(LocalFileSystem::new(path)?),
+            FileSystemType::Temp => Box::new(TempFileSystem::new()?),
+        };
+        let filesystem: Arc<Box<dyn FileSystem>> = Arc::new(filesystem);
 
         // Read manifest file into memory if there is one.
         let contents = filesystem.read_from_manifest();
@@ -444,5 +451,15 @@ impl SearchOptions {
 
     pub fn ranking_type(&self) -> RankingType {
         self.ranking_type.clone()
+    }
+}
+
+#[cfg(test)]
+mod varro_tests {
+    use super::*;
+
+    #[test]
+    fn test_new() {
+        Varro::new(Path::new(""), FileSystemType::Temp).unwrap();
     }
 }
