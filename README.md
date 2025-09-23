@@ -8,7 +8,7 @@ Varro is a text-based search engine inspired by Apache Lucene, attempting to off
 ## TODOs
 - [ ] Document updates by id
 - [ ] Delete document by id (and remove indexed data)
-- [ ] Field based indexing (default for a field is true but allow the user to choose to turn off a field)
+- [x] Field based indexing (default for a field is true but allow the user to choose to turn off a field)
 - [ ] "Highlighting" i.e store where the token is for the document
 - [ ] A query language to express more than just boolean query types
 - [x] TFIDF scoring on search

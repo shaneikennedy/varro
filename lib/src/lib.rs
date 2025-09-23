@@ -492,7 +492,7 @@ mod varro_tests {
     fn test_search() -> Result<()> {
         let index = Varro::new(Path::new(""), FileSystemType::Temp).unwrap();
         let mut doc = Document::default();
-        doc.add_field("name".into(), "varro testing".into(), false);
+        doc.add_field("name".into(), "varro testing".into(), true);
         index.index(doc.clone()).unwrap();
         index.flush()?;
 

@@ -13,12 +13,16 @@ pub struct Field {
 }
 
 impl Field {
-    pub fn new(name: &str, contents: &str) -> Self {
+    pub fn new(name: &str, contents: &str, index: bool) -> Self {
         Self {
             name: name.to_string(),
             contents: contents.to_string(),
-            index: false,
+            index,
         }
+    }
+
+    pub fn indexed(&self) -> bool {
+        self.index
     }
 
     pub fn name(&self) -> String {

@@ -27,11 +27,11 @@ pub fn main() -> Result<()> {
         let contents = read_to_string(path)?;
         let mut doc = varro::Document::default();
         info!("Ingesting {}", file.to_str().unwrap());
-        doc.add_field("name".into(), file.to_str().unwrap().to_string(), false);
+        doc.add_field("name".into(), file.to_str().unwrap().to_string(), true);
         let mut debug_contents = contents.clone();
         debug_contents.truncate(150);
         info!(" with contents: {:#?}", debug_contents);
-        doc.add_field("contents".into(), contents, false);
+        doc.add_field("contents".into(), contents, true);
         search_engine.index(doc)?;
     }
     search_engine.flush()?;

@@ -51,7 +51,7 @@ impl Field {
     #[wasm_bindgen(constructor)]
     pub fn new(name: &str, contents: &str) -> Field {
         Field {
-            field: varro::Field::new(name, contents),
+            field: varro::Field::new(name, contents, true),
         }
     }
     pub fn name(&self) -> String {
