@@ -107,7 +107,7 @@ impl DocumentSegment {
             terms: HashMap::new(),
         };
         let mut word_count = 0;
-        for field in doc.fields() {
+        for field in doc.fields().filter(|f| f.indexed()) {
             let content = field.contents();
             let content = tokens::tokenize(&content);
             content.for_each(|w| {
@@ -145,6 +145,16 @@ mod document_segment_tests {
         assert_eq!(doc_seg.terms.get("test"), Some(&2));
         assert_eq!(doc_seg.terms.get("again"), Some(&1));
     }
+
+    #[test]
+    fn test_dont_index_non_indexed_fields() {
+        let mut doc = document::Document::default();
+        doc.add_field("name".into(), "we will not index this".into(), false);
+        doc.add_field("body".into(), "we will index this".into(), true);
+        let doc_seg = DocumentSegment::new(&doc);
+        assert_eq!(doc.id(), doc_seg.document_id);
+        assert_eq!(doc_seg.terms.get("index"), Some(&1));
+    }
 }
 
 #[cfg(test)]
@@ -158,7 +168,7 @@ mod segment_tests {
         doc1.add_field(
             "content".into(),
             "mes deux chats chili och arnie".into(),
-            false,
+            true,
         );
         let doc_seg_1 = DocumentSegment::new(&doc1);
         segment.add_docucment_segment(&doc_seg_1);

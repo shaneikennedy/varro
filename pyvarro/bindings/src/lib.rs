@@ -54,7 +54,7 @@ mod pyvarro {
         #[new]
         pub fn new(name: &str, contents: &str) -> PyResult<Field> {
             Ok(Field {
-                field: varro::Field::new(name, contents),
+                field: varro::Field::new(name, contents, true),
             })
         }
         pub fn name(&self) -> String {
