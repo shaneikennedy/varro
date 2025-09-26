@@ -17,6 +17,7 @@ mod manifest;
 mod ranking;
 mod segment;
 mod tokens;
+mod vql;
 
 pub use document::{Document, Field};
 pub use ranking::RankingType;
