@@ -1,3 +1,5 @@
+use std::mem::discriminant;
+
 struct Lexer {
     query: String,
     pos: usize,
@@ -102,7 +104,7 @@ impl Lexer {
     }
 }
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug, Clone)]
 enum Op {
     Include,
     Exclude,
@@ -112,7 +114,7 @@ enum Op {
 type Tag = String;
 type Word = String;
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug, Clone)]
 enum Token {
     Selector(Op, Option<Tag>, Word),
     And,
@@ -120,6 +122,75 @@ enum Token {
     LeftParen,
     RightParen,
     Eof,
+}
+
+struct Parser {
+    tokens: Vec<Token>,
+    pos: usize,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Node {
+    Selector(Token),
+    BinaryOp(Box<Node>, Token, Box<Node>),
+}
+
+#[allow(dead_code)]
+impl Parser {
+    fn new(tokens: Vec<Token>) -> Self {
+        Self { tokens, pos: 0 }
+    }
+
+    fn get_current_token(&self) -> Token {
+        if self.pos < self.tokens.len() {
+            self.tokens.get(self.pos).unwrap().clone()
+        } else {
+            Token::Eof
+        }
+    }
+
+    fn eat(&mut self, token: Token) {
+        if discriminant(&self.get_current_token()) == discriminant(&token) {
+            self.pos += 1;
+        } else {
+            panic!(
+                "Unexpected token type {:#?}: got {:#?}",
+                token,
+                self.get_current_token()
+            );
+        }
+    }
+
+    fn factor(&mut self) -> Node {
+        let token = self.get_current_token();
+        match token {
+            Token::Selector(..) => {
+                self.eat(token.clone());
+                Node::Selector(token)
+            }
+            Token::LeftParen => {
+                self.eat(token);
+                let node = self.expression();
+                self.eat(Token::RightParen);
+                node
+            }
+            _ => panic!("Unexpected token in factor"),
+        }
+    }
+
+    fn expression(&mut self) -> Node {
+        let mut node = self.factor();
+        while let Token::And | Token::Or = self.get_current_token() {
+            let op = self.get_current_token();
+            self.eat(op.clone());
+            node = Node::BinaryOp(Box::new(node), op, Box::new(self.factor()));
+        }
+        node
+    }
+
+    fn parse(&mut self) -> Node {
+        self.expression()
+    }
 }
 
 #[cfg(test)]
@@ -172,5 +243,45 @@ mod lexer_tests {
         for (i, t) in tokens.iter().enumerate() {
             assert_eq!(t, expected.get(i).unwrap(), "bad token at {i}");
         }
+    }
+}
+
+#[cfg(test)]
+mod parser_tests {
+    use super::*;
+
+    #[test]
+    fn test_parse() {
+        let tokens = vec![
+            Token::Selector(Op::Include, Some("title".to_string()), "cats".to_string()),
+            Token::And,
+            Token::Selector(Op::Include, None, "cats".to_string()),
+            Token::Or,
+            Token::Selector(Op::Exclude, Some("body".to_string()), "dog".to_string()),
+        ];
+        let mut parser = Parser::new(tokens);
+        let ast = parser.parse();
+        let expected = Node::BinaryOp(
+            Box::new(Node::BinaryOp(
+                Box::new(Node::Selector(Token::Selector(
+                    Op::Include,
+                    Some("title".into()),
+                    "cats".into(),
+                ))),
+                Token::And,
+                Box::new(Node::Selector(Token::Selector(
+                    Op::Include,
+                    None,
+                    "cats".into(),
+                ))),
+            )),
+            Token::Or,
+            Box::new(Node::Selector(Token::Selector(
+                Op::Exclude,
+                Some("body".into()),
+                "dog".into(),
+            ))),
+        );
+        assert_eq!(ast, expected);
     }
 }
