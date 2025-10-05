@@ -1,52 +1,173 @@
-use anyhow::Result;
-
-#[allow(dead_code)]
-fn tokenize(query: &str) -> Result<Vec<Token>> {
-    let mut tokens: Vec<Token> = Vec::new();
-    for t in query.split_whitespace() {
-        match t {
-            "(" => tokens.push(Token::LeftParen),
-            ")" => tokens.push(Token::RightParen),
-            "&" => tokens.push(Token::And),
-            "|" => tokens.push(Token::Or),
-            t => tokens.push(Token::TagWord(t.to_string())),
-        }
-    }
-    Ok(tokens)
+struct Lexer {
+    query: String,
+    pos: usize,
+    current_char: Option<char>,
 }
 
-// example of possilbe tokens tag:word & word | -tag:word & ( tag:word | tag:word )
-// for now whitespace matters, notice the spaces even around the parens
 #[allow(dead_code)]
+impl Lexer {
+    fn new(query: &str) -> Self {
+        let query = query.to_string();
+        Self {
+            query: query.clone(),
+            pos: 0,
+            current_char: query.chars().nth(0),
+        }
+    }
+
+    fn advance(&mut self) {
+        self.pos += 1;
+        self.current_char = self.query.chars().nth(self.pos);
+    }
+
+    fn skip_whitespace(&mut self) {
+        while let Some(c) = self.current_char {
+            match c.is_whitespace() {
+                true => self.advance(),
+                false => break,
+            }
+        }
+    }
+
+    fn selector(&mut self) -> Token {
+        let op = match self.current_char {
+            Some(c) => match c {
+                '~' => {
+                    self.advance();
+                    Op::Similar
+                }
+                '-' => {
+                    self.advance();
+                    Op::Exclude
+                }
+                _ => Op::Include,
+            },
+            None => Op::Include,
+        };
+        let mut tag_word = String::new();
+        while let Some(c) = self.current_char {
+            match c.is_alphanumeric() || c == ':' {
+                true => {
+                    tag_word.push(c);
+                    self.advance();
+                }
+                false => break,
+            }
+        }
+
+        let parts = tag_word.split_once(":");
+        match parts {
+            Some((tag, word)) => Token::Selector(op, Some(tag.to_string()), word.to_string()),
+            _ => Token::Selector(op, None, tag_word),
+        }
+    }
+
+    fn get_next_token(&mut self) -> Token {
+        self.skip_whitespace();
+        match self.current_char {
+            Some(c) => match c {
+                'a'..='z' | '~' | '-' => self.selector(),
+                '&' => {
+                    self.advance();
+                    Token::And
+                }
+                '|' => {
+                    self.advance();
+                    Token::Or
+                }
+                '(' => {
+                    self.advance();
+                    Token::LeftParen
+                }
+                ')' => {
+                    self.advance();
+                    Token::RightParen
+                }
+                _ => panic!("Unexpected token {c}"),
+            },
+            None => Token::Eof,
+        }
+    }
+
+    fn tokenize(&mut self) -> Vec<Token> {
+        let mut tokens = Vec::new();
+        loop {
+            let token = self.get_next_token();
+            match token {
+                Token::Eof => break,
+                _ => tokens.push(token),
+            }
+        }
+        tokens
+    }
+}
+
+#[derive(PartialEq, Eq, Debug)]
+enum Op {
+    Include,
+    Exclude,
+    Similar,
+}
+
+type Tag = String;
+type Word = String;
+
 #[derive(PartialEq, Eq, Debug)]
 enum Token {
-    TagWord(String),
+    Selector(Op, Option<Tag>, Word),
     And,
     Or,
     LeftParen,
     RightParen,
+    Eof,
 }
 
 #[cfg(test)]
-mod tokenize_tests {
+mod lexer_tests {
     use super::*;
 
     #[test]
     fn test_tokenize() {
-        let query = "tag:word & word | -tag:word & ( tag:word | tag:word )";
-        let tokens = tokenize(query).unwrap();
+        let query = "title:cats & cats | -body:dog & ( title:dog | ~body:hound )";
+        let mut lexer = Lexer::new(query);
+        let tokens = lexer.tokenize();
         let expected = vec![
-            Token::TagWord("tag:word".to_string()),
+            Token::Selector(Op::Include, Some("title".to_string()), "cats".to_string()),
             Token::And,
-            Token::TagWord("word".to_string()),
+            Token::Selector(Op::Include, None, "cats".to_string()),
             Token::Or,
-            Token::TagWord("-tag:word".to_string()),
+            Token::Selector(Op::Exclude, Some("body".to_string()), "dog".to_string()),
             Token::And,
             Token::LeftParen,
-            Token::TagWord("tag:word".to_string()),
+            Token::Selector(Op::Include, Some("title".to_string()), "dog".to_string()),
             Token::Or,
-            Token::TagWord("tag:word".to_string()),
+            Token::Selector(Op::Similar, Some("body".to_string()), "hound".to_string()),
             Token::RightParen,
+        ];
+        for (i, t) in tokens.iter().enumerate() {
+            assert_eq!(t, expected.get(i).unwrap(), "bad token at {i}");
+        }
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_bad_tokens() {
+        let query = "title:cats & cats ? -body:dog";
+        let mut lexer = Lexer::new(query);
+        lexer.tokenize();
+    }
+
+    #[test]
+    fn test_whitespace_ignored() {
+        let query = "title:cats & cats          | -body:dog";
+        let mut lexer = Lexer::new(query);
+        let tokens = lexer.tokenize();
+        let expected = vec![
+            Token::Selector(Op::Include, Some("title".to_string()), "cats".to_string()),
+            Token::And,
+            Token::Selector(Op::Include, None, "cats".to_string()),
+            Token::Or,
+            Token::Selector(Op::Exclude, Some("body".to_string()), "dog".to_string()),
         ];
         for (i, t) in tokens.iter().enumerate() {
             assert_eq!(t, expected.get(i).unwrap(), "bad token at {i}");
