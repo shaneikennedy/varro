@@ -105,7 +105,7 @@ impl Lexer {
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
-enum Op {
+pub(crate) enum Op {
     Include,
     Exclude,
     Similar,
@@ -115,7 +115,7 @@ type Tag = String;
 type Word = String;
 
 #[derive(PartialEq, Eq, Debug, Clone)]
-enum Token {
+pub(crate) enum Token {
     Selector(Op, Option<Tag>, Word),
     And,
     Or,
@@ -130,7 +130,7 @@ struct Parser {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum Node {
+pub(crate) enum Node {
     Selector(Token),
     BinaryOp(Box<Node>, Token, Box<Node>),
 }
@@ -190,6 +190,21 @@ impl Parser {
 
     fn parse(&mut self) -> Node {
         self.expression()
+    }
+}
+
+pub(crate) struct Engine {}
+
+impl Engine {
+    pub fn new() -> Self {
+        Self {}
+    }
+
+    pub fn execute(&self, query: &str) -> Node {
+        let mut lexer = Lexer::new(query);
+        let tokens = lexer.tokenize();
+        let mut parser = Parser::new(tokens);
+        parser.parse()
     }
 }
 

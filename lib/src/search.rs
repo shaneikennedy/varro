@@ -1,10 +1,25 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    fmt::Display,
+    path::Path,
+    sync::{Arc, RwLock},
+};
 
-use crate::{Document, Score};
+use bincode::config;
+use log::{debug, warn};
+
+use crate::{
+    Document, Score,
+    filesystem::FileSystem,
+    manifest::Manifest,
+    ranking,
+    segment::{DocumentSegment, Segment},
+    vql::{self, Engine, Node, Token},
+};
 
 pub fn or(
     existing: HashMap<Document, Score>,
-    matches: Vec<(Document, Score)>,
+    matches: HashMap<Document, Score>,
 ) -> HashMap<Document, Score> {
     let mut matching = existing.clone();
     for (doc, score) in matches {
@@ -31,7 +46,7 @@ mod search_or_tests {
     fn test_or_existing_values() {
         let mut existing = HashMap::new();
         existing.insert(Document::new("a".into()), 1.0);
-        let matches = vec![(Document::new("a".into()), 1.0)];
+        let matches = [(Document::new("a".into()), 1.0)].into();
         let res = or(existing, matches);
         assert!(res.contains_key(&Document::new("a".into())));
         assert_eq!(res.get(&Document::new("a".into())).unwrap(), &2.0);
@@ -41,7 +56,7 @@ mod search_or_tests {
     fn test_or_new_values() {
         let mut existing = HashMap::new();
         existing.insert(Document::new("a".into()), 1.0);
-        let matches = vec![(Document::new("b".into()), 1.0)];
+        let matches = [(Document::new("b".into()), 1.0)].into();
         let res = or(existing, matches);
         assert!(res.contains_key(&Document::new("a".into())));
         assert!(res.contains_key(&Document::new("b".into())));
@@ -52,7 +67,7 @@ mod search_or_tests {
 
 pub fn and(
     existing: HashMap<Document, Score>,
-    matches: Vec<(Document, Score)>,
+    matches: HashMap<Document, Score>,
 ) -> HashMap<Document, Score> {
     let matching = existing.clone();
     let mut new_matching: HashMap<Document, Score> = HashMap::new();
@@ -76,7 +91,7 @@ mod search_and_tests {
     fn test_and_existing_values() {
         let mut existing = HashMap::new();
         existing.insert(Document::new("a".into()), 2.0);
-        let matches = vec![(Document::new("a".into()), 1.0)];
+        let matches = [(Document::new("a".into()), 1.0)].into();
         let res = and(existing, matches);
         assert!(res.contains_key(&Document::new("a".into())));
         assert_eq!(res.get(&Document::new("a".into())).unwrap(), &2.0);
@@ -86,9 +101,144 @@ mod search_and_tests {
     fn test_or_new_values() {
         let mut existing = HashMap::new();
         existing.insert(Document::new("a".into()), 1.0);
-        let matches = vec![(Document::new("b".into()), 1.0)];
+        let matches = [(Document::new("b".into()), 1.0)].into();
         let res = and(existing, matches);
         assert!(!res.contains_key(&Document::new("a".into())));
         assert!(!res.contains_key(&Document::new("b".into())));
+    }
+}
+
+#[derive(PartialEq, Eq, Debug, Clone)]
+#[allow(dead_code)]
+enum Op {
+    Include,
+    Exclude,
+    Similar,
+}
+
+impl From<vql::Op> for Op {
+    fn from(value: vql::Op) -> Self {
+        match value {
+            vql::Op::Include => Op::Include,
+            vql::Op::Exclude => Op::Exclude,
+            vql::Op::Similar => Op::Similar,
+        }
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) struct Selector {
+    op: Op,
+    tag: Option<String>,
+    word: String,
+}
+
+impl Display for Selector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "op: {:#?}, tag: {:#?}, word: {}",
+            self.op, self.tag, self.word
+        )
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) struct Searcher {
+    filesystem: Arc<Box<dyn FileSystem>>,
+    manifest: Arc<RwLock<Manifest>>,
+}
+
+#[allow(dead_code)]
+impl Searcher {
+    pub fn new(filesystem: Arc<Box<dyn FileSystem>>, manifest: Arc<RwLock<Manifest>>) -> Self {
+        Self {
+            filesystem,
+            manifest,
+        }
+    }
+
+    fn search_for_selector(
+        &self,
+        selector: Selector,
+        segment: &Segment,
+    ) -> HashMap<Document, Score> {
+        let mut matching = HashMap::new();
+        match selector.op {
+            Op::Include => (),
+            Op::Exclude => warn!("Varro does not support exclusions yet, defaulting to Include"),
+            Op::Similar => {
+                warn!("Varro does not support similarity selections yet, defaulting to Include")
+            }
+        }
+        if let Some(tfdf) = segment.term_index.get(&selector.word) {
+            let docs_with_term = tfdf.term_freq.len();
+            debug!("Total docs for term {}: {docs_with_term}", selector.word);
+            tfdf.term_freq.iter().for_each(|(doc_id, tf)| {
+                // TODO better way to quickly get the stats of a doc (like length)
+                let document_length =
+                    DocumentSegment::new(&self.get_doc_by_id(doc_id.to_string()).unwrap())
+                        .document_length();
+                let manifest = self.manifest.read().unwrap();
+                let score = ranking::score(
+                    *tf,
+                    manifest.total_docs as i32,
+                    docs_with_term as i32,
+                    document_length,
+                    manifest.average_document_length,
+                    &ranking::RankingType::Bm25,
+                );
+                drop(manifest);
+                matching.insert(Document::new(doc_id.to_string()), score);
+            });
+        } else {
+            debug!("No docs matching selector: {selector}");
+        }
+        matching
+    }
+
+    pub fn search(&self, query: &str, segment: &Segment) -> HashMap<Document, Score> {
+        let engine = Engine::new();
+        let ast = engine.execute(query);
+        debug!("Ast from query: {:#?}", ast);
+        self._search(ast, segment)
+    }
+
+    fn _search(&self, ast: Node, segment: &Segment) -> HashMap<Document, Score> {
+        match ast {
+            Node::Selector(token) => match token {
+                Token::Selector(op, _, word) => {
+                    let s = Selector {
+                        op: op.into(),
+                        tag: None,
+                        word,
+                    };
+                    self.search_for_selector(s, segment)
+                }
+                _ => panic!("Something went wrong in selector"),
+            },
+            Node::BinaryOp(node, token, node1) => {
+                let left = self._search(*node, segment);
+                let right = self._search(*node1, segment);
+                match token {
+                    Token::And => and(left, right),
+                    Token::Or => or(left, right),
+                    _ => panic!("Something went wrong in binary op"),
+                }
+            }
+        }
+    }
+
+    fn get_doc_by_id(&self, id: String) -> Option<Document> {
+        let file = self.filesystem.read_from_documents(Path::new(&id.clone()));
+        match file {
+            Ok(f) => {
+                let config = config::standard();
+                let (decoded, _): (Document, usize) =
+                    bincode::decode_from_slice(&f[..], config).unwrap();
+                Some(decoded)
+            }
+            Err(_) => None,
+        }
     }
 }
