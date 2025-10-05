@@ -16,7 +16,7 @@ fn main() -> Result<()> {
     let opts = SearchOptions::new()
         .with_include_documents(true)
         .with_ranking_type(RankingType::Bm25);
-    let results = search_engine.search("git and commit".into(), Some(opts));
+    let results = search_engine.search("git & commit".into(), Some(opts));
     for (doc, score) in results {
         info!("Doc: {} with a score of: {}", doc.id(), score);
         let c = doc.get_field("contents".into()).unwrap();

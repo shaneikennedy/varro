@@ -27,6 +27,7 @@ use crate::compaction::SegmentCompactor;
 use crate::filesystem::S3FileSystem;
 use crate::filesystem::{FileSystem, LocalFileSystem, TempFileSystem};
 use crate::manifest::Manifest;
+use crate::search::Searcher;
 use crate::segment::{DocumentSegment, Segment};
 
 /// The model for indexing, querying and retrieveing documents
@@ -63,6 +64,9 @@ pub struct Varro {
 
     /// The filesystem abstraction to accomodate different file stores. Default is LocalFileSystem
     filesystem: Arc<Box<dyn FileSystem>>,
+
+    /// Internal search logic
+    searcher: Searcher,
 }
 
 pub enum FileSystemType {
@@ -103,6 +107,8 @@ impl Varro {
             }
         };
 
+        let searcher = Searcher::new(filesystem.clone(), manifest.clone());
+
         let min_segment_size = Arc::new(Mutex::new(64000000));
 
         // Setup the segment compactor thread
@@ -127,6 +133,7 @@ impl Varro {
             compaction_freq,
             min_segment_size,
             filesystem,
+            searcher,
         };
         Ok(varro)
     }
@@ -189,8 +196,7 @@ impl Varro {
         query: String,
         options: Option<SearchOptions>,
     ) -> impl Iterator<Item = (Document, Score)> {
-        info!("Searching for {query}");
-        let tokens = tokens::tokenize(query.as_str());
+        info!("Search query: {query}");
 
         // Get all the segment files and load them into memory, merging them all into a master segment
         let manifest_guard = self.manifest.read().unwrap();
@@ -222,70 +228,9 @@ impl Varro {
         }
         drop(manifest_guard);
 
-        let mut matching_docs_for_token: HashMap<String, Vec<(Document, Score)>> = HashMap::new();
-        let manifest_guard = self.manifest.read().unwrap();
-        let total_docs = manifest_guard.total_docs;
-        let average_doc_length = manifest_guard.average_document_length;
-        debug!("Total docs in index: {total_docs}");
         let opts = options.unwrap_or_default();
         // Collect a map of terms to docs for which the term appears, and it's tfidf score
-        drop(manifest_guard);
-        for token in tokens {
-            if let Some(tfdf) = master_segment.term_index.get(&token) {
-                let docs_with_term = tfdf.term_freq.len();
-                debug!("Total docs for term {token}: {docs_with_term}");
-                tfdf.term_freq.iter().for_each(|(doc_id, tf)| {
-                    // TODO better way to quickly get the stats of a doc (like length)
-                    let document_length =
-                        DocumentSegment::new(&self.get_doc_by_id(doc_id.to_string()).unwrap())
-                            .document_length();
-                    let score = ranking::score(
-                        *tf,
-                        total_docs as i32,
-                        docs_with_term as i32,
-                        document_length,
-                        average_doc_length,
-                        &opts.ranking_type,
-                    );
-                    matching_docs_for_token
-                        .entry(token.clone())
-                        .and_modify(|vec| vec.push((Document::new(doc_id.to_string()), score)))
-                        .or_insert(vec![(Document::new(doc_id.to_string()), score)]);
-                });
-            } else {
-                debug!("No docs for term {token}");
-                matching_docs_for_token.insert(token, Vec::new());
-            }
-        }
-
-        // Reduce the map of terms to matching docs to just matching docs based on the search operator
-        let mut matching_docs: HashMap<Document, Score> = HashMap::new();
-        match opts.search_operator {
-            SearchOperator::OR => {
-                for docs in matching_docs_for_token.into_values() {
-                    matching_docs = search::or(matching_docs, docs);
-                }
-            }
-            SearchOperator::AND => {
-                for (i, docs) in matching_docs_for_token.into_values().enumerate() {
-                    let mut new_matching_docs: HashMap<Document, Score> = HashMap::new();
-                    for (doc, score) in docs.iter() {
-                        // Prefill the matching_docs with the first term, whatever it is
-                        if i == 0 {
-                            matching_docs.insert(doc.clone(), *score);
-                        } else {
-                            new_matching_docs = search::and(matching_docs.clone(), docs.clone());
-                        }
-                    }
-
-                    // Only reassign this on the non-first iteration
-                    if i > 0 {
-                        // Swap matching docs with the AND results from this term iteration
-                        matching_docs = new_matching_docs;
-                    }
-                }
-            }
-        }
+        let mut matching_docs = self.searcher.search(&query, &master_segment);
         if opts.include_documents {
             matching_docs = matching_docs
                 .iter()
