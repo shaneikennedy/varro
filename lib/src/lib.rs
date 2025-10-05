@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::ops::Add;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -15,6 +14,7 @@ pub mod document;
 mod filesystem;
 mod manifest;
 mod ranking;
+mod search;
 mod segment;
 mod tokens;
 mod vql;
@@ -222,7 +222,6 @@ impl Varro {
         }
         drop(manifest_guard);
 
-        let mut matching_docs: HashMap<Document, Score> = HashMap::new();
         let mut matching_docs_for_token: HashMap<String, Vec<(Document, Score)>> = HashMap::new();
         let manifest_guard = self.manifest.read().unwrap();
         let total_docs = manifest_guard.total_docs;
@@ -260,40 +259,22 @@ impl Varro {
         }
 
         // Reduce the map of terms to matching docs to just matching docs based on the search operator
+        let mut matching_docs: HashMap<Document, Score> = HashMap::new();
         match opts.search_operator {
             SearchOperator::OR => {
                 for docs in matching_docs_for_token.into_values() {
-                    for (doc, score) in docs {
-                        match matching_docs.contains_key(&doc) {
-                            true => {
-                                matching_docs
-                                    .entry(doc)
-                                    .and_modify(|v| {
-                                        let _ = v.add(score);
-                                    })
-                                    .or_insert(score);
-                            }
-                            false => {
-                                matching_docs.insert(doc, score);
-                            }
-                        }
-                    }
+                    matching_docs = search::or(matching_docs, docs);
                 }
             }
             SearchOperator::AND => {
                 for (i, docs) in matching_docs_for_token.into_values().enumerate() {
                     let mut new_matching_docs: HashMap<Document, Score> = HashMap::new();
-                    for (doc, score) in docs {
+                    for (doc, score) in docs.iter() {
                         // Prefill the matching_docs with the first term, whatever it is
                         if i == 0 {
-                            matching_docs.insert(doc, score);
+                            matching_docs.insert(doc.clone(), *score);
                         } else {
-                            // Then construct a new_matching_docs with only the terms that also exist
-                            // in the previous iteration of matching docs (i.e AND)
-                            if matching_docs.contains_key(&doc) {
-                                let old_score = matching_docs.get(&doc).unwrap();
-                                new_matching_docs.insert(doc, score * old_score);
-                            }
+                            new_matching_docs = search::and(matching_docs.clone(), docs.clone());
                         }
                     }
 
