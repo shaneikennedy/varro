@@ -158,19 +158,12 @@ impl Searcher {
         }
     }
 
-    fn search_for_selector(
+    fn get_matching_docs_with_score(
         &self,
-        selector: Selector,
+        selector: &Selector,
         segment: &Segment,
-    ) -> HashMap<Document, Score> {
+    ) -> impl Iterator<Item = (Document, Score)> {
         let mut matching = HashMap::new();
-        match selector.op {
-            Op::Include => (),
-            Op::Exclude => warn!("Varro does not support exclusions yet, defaulting to Include"),
-            Op::Similar => {
-                warn!("Varro does not support similarity selections yet, defaulting to Include")
-            }
-        }
         if let Some(tfdf) = segment.term_index.get(&selector.word) {
             let docs_with_term = tfdf.term_freq.len();
             debug!("Total docs for term {}: {docs_with_term}", selector.word);
@@ -194,7 +187,43 @@ impl Searcher {
         } else {
             debug!("No docs matching selector: {selector}");
         }
-        matching
+        matching.into_iter()
+    }
+
+    fn search_for_selector(
+        &self,
+        selector: Selector,
+        segment: &Segment,
+    ) -> HashMap<Document, Score> {
+        match selector.op {
+            Op::Include => self
+                .get_matching_docs_with_score(&selector, segment)
+                .collect(),
+            Op::Exclude => {
+                // This is going to be inefficient. Get all docs in the index (just the id, which is a ls on the documents dir)
+                // Find all documents that _would_ match the tag:word
+                // and take the difference all - matching
+                let all_docs = self.filesystem.list_documents();
+                let matching: HashMap<Document, Score> = self
+                    .get_matching_docs_with_score(&selector, segment)
+                    .collect();
+                let result: HashMap<Document, Score> = all_docs
+                    .iter()
+                    .filter_map(|d| {
+                        let doc = Document::new(d.to_string());
+                        match matching.contains_key(&doc) {
+                            true => Some((doc, 0.05)), // Arbitrary 0.05 score for exclusion results
+                            false => None,
+                        }
+                    })
+                    .collect();
+                result
+            }
+            Op::Similar => {
+                warn!("Varro does not support similarity selections yet, defaulting to no matches");
+                HashMap::new()
+            }
+        }
     }
 
     pub fn search(&self, query: &str, segment: &Segment) -> HashMap<Document, Score> {

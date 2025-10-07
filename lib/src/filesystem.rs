@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use log::info;
 #[cfg(feature = "s3")]
 use s3::{Bucket, creds::Credentials};
+use std::collections::HashSet;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -11,6 +12,7 @@ use tempfile::TempDir;
 const MANIFEST_FILENAME: &str = "manifest.varro";
 
 pub(crate) trait FileSystem: Send + Sync {
+    fn list_documents(&self) -> HashSet<String>;
     fn read_from_index(&self, filename: &Path) -> Result<Vec<u8>>;
     fn read_from_documents(&self, filename: &Path) -> Result<Vec<u8>>;
     fn read_from_manifest(&self) -> Result<Vec<u8>>;
@@ -53,9 +55,19 @@ impl LocalFileSystem {
         fs::write(filename, contents).with_context(|| "failed to write contents")?;
         Ok(())
     }
+
+    fn list(&self) -> HashSet<String> {
+        let docs = fs::read_dir(self.documents_path.clone()).unwrap();
+        docs.filter_map(|f| f.ok())
+            .map(|f| f.file_name().into_string().unwrap())
+            .collect()
+    }
 }
 
 impl FileSystem for LocalFileSystem {
+    fn list_documents(&self) -> HashSet<String> {
+        self.list()
+    }
     fn read_from_index(&self, filename: &Path) -> Result<Vec<u8>> {
         self.read(&self.index_path.join(filename))
     }
@@ -120,6 +132,13 @@ impl TempFileSystem {
     fn index_path(&self) -> PathBuf {
         self.index_path.clone()
     }
+
+    fn list(&self) -> HashSet<String> {
+        let docs = fs::read_dir(self.documents_path.clone()).unwrap();
+        docs.filter_map(|f| f.ok())
+            .map(|f| f.file_name().into_string().unwrap())
+            .collect()
+    }
 }
 
 impl FileSystem for TempFileSystem {
@@ -145,6 +164,10 @@ impl FileSystem for TempFileSystem {
 
     fn write_to_manifest(&self, contents: Vec<u8>) -> Result<()> {
         self.write_to_index(Path::new(MANIFEST_FILENAME), contents)
+    }
+
+    fn list_documents(&self) -> HashSet<String> {
+        self.list()
     }
 }
 
@@ -190,10 +213,19 @@ impl S3FileSystem {
             .with_context(|| "failed to write contents")?;
         Ok(())
     }
+
+    fn list(&self) -> HashSet<String> {
+        let objects = self.bucket.list(self.documents_path.clone(), None).unwrap();
+        objects.into_iter().map(|o| o.name).collect()
+    }
 }
 
 #[cfg(feature = "s3")]
 impl FileSystem for S3FileSystem {
+    fn list_documents(&self) -> HashSet<String> {
+        self.list()
+    }
+
     fn read_from_index(&self, filename: &Path) -> Result<Vec<u8>> {
         self.read(format!("{}/{}", &self.index_path, filename.to_str().unwrap()).as_str())
     }
