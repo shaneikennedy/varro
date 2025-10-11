@@ -179,7 +179,6 @@ impl Searcher {
                     docs_with_term as i32,
                     document_length,
                     manifest.average_document_length,
-                    &ranking::RankingType::Bm25,
                 );
                 drop(manifest);
                 matching.insert(Document::new(doc_id.to_string()), score);

@@ -113,7 +113,6 @@ impl SearchOptions {
     pub fn new(
         include_documents: Option<bool>,
         operator: Option<SearchOperator>,
-        ranking_type: Option<RankingType>,
     ) -> SearchOptions {
         let mut opts = varro::SearchOptions::default();
         if let Some(include_documents) = include_documents {
@@ -121,9 +120,6 @@ impl SearchOptions {
         }
         if let Some(operator) = operator {
             opts = opts.with_search_operator(operator.into());
-        }
-        if let Some(ranking_type) = ranking_type {
-            opts = opts.with_ranking_type(ranking_type.into());
         }
         SearchOptions { options: opts }
     }

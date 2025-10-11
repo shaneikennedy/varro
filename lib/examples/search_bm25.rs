@@ -2,7 +2,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use log::{LevelFilter, info, warn};
-use varro::{FileSystemType, RankingType, SearchOptions, Varro};
+use varro::{FileSystemType, SearchOptions, Varro};
 
 fn main() -> Result<()> {
     env_logger::builder()
@@ -13,9 +13,7 @@ fn main() -> Result<()> {
     if search_engine.index_size() == 0 {
         warn!("There are no documents in the index, try running the ingest exmaple first");
     }
-    let opts = SearchOptions::new()
-        .with_include_documents(true)
-        .with_ranking_type(RankingType::Bm25);
+    let opts = SearchOptions::new().with_include_documents(true);
     let results = search_engine.search("git & commit".into(), Some(opts));
     for (doc, score) in results {
         info!("Doc: {} with a score of: {}", doc.id(), score);

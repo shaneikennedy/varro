@@ -338,10 +338,6 @@ pub struct SearchOptions {
     /// higher. When search_operator is set to AND, varro.search("git docker") will only return
     /// documents with both terms appearing in the document. Default is SearchOperator::OR.
     search_operator: SearchOperator,
-
-    /// What algorithm to use when ranking documents that match the query. Default is TF-IDF
-    /// (term-frequency inverse-document-frequency)
-    ranking_type: RankingType,
 }
 
 impl Default for SearchOptions {
@@ -355,7 +351,6 @@ impl SearchOptions {
         SearchOptions {
             include_documents: false,
             search_operator: SearchOperator::OR,
-            ranking_type: RankingType::Tfidf,
         }
     }
 
@@ -375,15 +370,6 @@ impl SearchOptions {
 
     pub fn search_operator(&self) -> SearchOperator {
         self.search_operator.clone()
-    }
-
-    pub fn with_ranking_type(&mut self, ranking_type: RankingType) -> Self {
-        self.ranking_type = ranking_type;
-        self.clone()
-    }
-
-    pub fn ranking_type(&self) -> RankingType {
-        self.ranking_type.clone()
     }
 }
 
