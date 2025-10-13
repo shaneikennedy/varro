@@ -1,8 +1,5 @@
 #[derive(Clone)]
 pub enum RankingType {
-    /// The basic TF-IDF algorithm
-    Tfidf,
-
     /// The BM25 ranking algorithm
     Bm25,
 }
@@ -26,23 +23,12 @@ pub(crate) fn score(
     docs_with_term: i32,
     doc_length: i32,
     average_doc_length: f64,
-    ranking_type: &RankingType,
 ) -> f64 {
-    match ranking_type {
-        RankingType::Tfidf => {
-            let idf = (total_docs as f64 / docs_with_term as f64).log10();
-            tf * idf
-        }
-        RankingType::Bm25 => {
-            let idf = (1.0
-                + (total_docs as f64 - docs_with_term as f64 + 0.5)
-                    / (docs_with_term as f64 + 0.5))
-                .ln();
+    let idf = (1.0
+        + (total_docs as f64 - docs_with_term as f64 + 0.5) / (docs_with_term as f64 + 0.5))
+        .ln();
 
-            idf * ((tf * (K1 + 1.0))
-                / (tf + K1 * (1.0 - B + B * (doc_length as f64 / average_doc_length))))
-        }
-    }
+    idf * ((tf * (K1 + 1.0)) / (tf + K1 * (1.0 - B + B * (doc_length as f64 / average_doc_length))))
 }
 
 #[cfg(test)]
@@ -50,15 +36,8 @@ mod ranking_tests {
     use super::*;
 
     #[test]
-    fn test_tfidf() {
-        let score = score(20.0, 200, 6, 2000, 1100.0, &RankingType::Tfidf);
-
-        assert_eq!(score, 30.45757490560675);
-    }
-
-    #[test]
-    fn test_bm25() {
-        let score = score(20.0, 200, 6, 2000, 1100.0, &RankingType::Bm25);
+    fn test_score() {
+        let score = score(20.0, 200, 6, 2000, 1100.0);
 
         assert_eq!(score, 6.882914719768845);
     }

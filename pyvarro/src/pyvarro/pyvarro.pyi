@@ -24,7 +24,6 @@ class SearchOptions:
         self,
         include_documents: Optional[bool] = None,
         operator: Optional[SearchOperator] = None,
-        ranking_type: Optional[RankingType] = None,
     ) -> None: ...
 
 class PyVarro:

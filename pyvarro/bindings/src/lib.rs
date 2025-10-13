@@ -84,14 +84,12 @@ mod pyvarro {
     #[pyclass]
     #[derive(Clone)]
     pub enum RankingType {
-        Tfidf,
         Bm25,
     }
 
     impl From<RankingType> for varro::RankingType {
         fn from(val: RankingType) -> varro::RankingType {
             match val {
-                RankingType::Tfidf => varro::RankingType::Tfidf,
                 RankingType::Bm25 => varro::RankingType::Bm25,
             }
         }
@@ -116,7 +114,6 @@ mod pyvarro {
         pub fn new(
             include_documents: Option<bool>,
             operator: Option<SearchOperator>,
-            ranking_type: Option<RankingType>,
         ) -> SearchOptions {
             let mut opts = varro::SearchOptions::default();
             if let Some(include_documents) = include_documents {
@@ -124,9 +121,6 @@ mod pyvarro {
             }
             if let Some(operator) = operator {
                 opts = opts.with_search_operator(operator.into());
-            }
-            if let Some(ranking_type) = ranking_type {
-                opts = opts.with_ranking_type(ranking_type.into());
             }
             SearchOptions { options: opts }
         }
@@ -192,7 +186,7 @@ mod pyvarro {
             query: String,
             options: Option<SearchOptions>,
         ) -> Vec<(Document, Score)> {
-            let search_options = options.unwrap_or(SearchOptions::new(None, None, None));
+            let search_options = options.unwrap_or(SearchOptions::new(None, None));
             self.varro
                 .search(query, Some(search_options.into()))
                 .map(|(doc, score)| (doc.into(), score))
