@@ -17,6 +17,7 @@ mod ranking;
 mod search;
 mod segment;
 mod tokens;
+mod vector;
 mod vql;
 
 pub use document::{Document, Field};
@@ -29,6 +30,7 @@ use crate::filesystem::{FileSystem, LocalFileSystem, TempFileSystem};
 use crate::manifest::Manifest;
 use crate::search::Searcher;
 use crate::segment::{DocumentSegment, Segment};
+use crate::vector::VectorStore;
 
 /// The model for indexing, querying and retrieveing documents
 pub struct Varro {
@@ -64,6 +66,10 @@ pub struct Varro {
 
     /// The filesystem abstraction to accomodate different file stores. Default is LocalFileSystem
     filesystem: Arc<Box<dyn FileSystem>>,
+
+    /// The vector database to use for "similarity" queries
+    #[allow(dead_code)]
+    vector_store: Arc<Mutex<VectorStore>>,
 
     /// Internal search logic
     searcher: Searcher,
@@ -106,6 +112,7 @@ impl Varro {
                 }))
             }
         };
+        let vector_store = Arc::new(Mutex::new(VectorStore::new(path)));
 
         let searcher = Searcher::new(filesystem.clone(), manifest.clone());
 
@@ -134,6 +141,7 @@ impl Varro {
             min_segment_size,
             filesystem,
             searcher,
+            vector_store,
         };
         Ok(varro)
     }
