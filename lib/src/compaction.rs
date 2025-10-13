@@ -21,6 +21,7 @@ pub(crate) struct SegmentCompactor {
     compaction_freq: Arc<Mutex<Duration>>,
 }
 
+// TODO: This needs to work on our filesystem abstraction now, not the fs module
 impl SegmentCompactor {
     pub fn new(
         stop_signal: Arc<Mutex<bool>>,
