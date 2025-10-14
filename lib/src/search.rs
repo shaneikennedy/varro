@@ -14,6 +14,7 @@ use crate::{
     manifest::Manifest,
     ranking,
     segment::{DocumentSegment, Segment},
+    tokens::tokenize,
     vql::{self, Engine, Node, Token},
 };
 
@@ -129,8 +130,8 @@ impl From<vql::Op> for Op {
 #[allow(dead_code)]
 pub(crate) struct Selector {
     op: Op,
-    tag: Option<String>,
-    word: String,
+    field: Option<String>,
+    query: String,
 }
 
 impl Display for Selector {
@@ -138,7 +139,7 @@ impl Display for Selector {
         write!(
             f,
             "op: {:#?}, tag: {:#?}, word: {}",
-            self.op, self.tag, self.word
+            self.op, self.field, self.query
         )
     }
 }
@@ -160,13 +161,13 @@ impl Searcher {
 
     fn get_matching_docs_with_score(
         &self,
-        selector: &Selector,
+        term: &str,
         segment: &Segment,
     ) -> impl Iterator<Item = (Document, Score)> {
         let mut matching = HashMap::new();
-        if let Some(tfdf) = segment.term_index.get(&selector.word) {
+        if let Some(tfdf) = segment.term_index.get(term) {
             let docs_with_term = tfdf.term_freq.len();
-            debug!("Total docs for term {}: {docs_with_term}", selector.word);
+            debug!("Total docs for term {}: {docs_with_term}", term);
             tfdf.term_freq.iter().for_each(|(doc_id, tf)| {
                 // TODO better way to quickly get the stats of a doc (like length)
                 let document_length =
@@ -184,7 +185,7 @@ impl Searcher {
                 matching.insert(Document::new(doc_id.to_string()), score);
             });
         } else {
-            debug!("No docs matching selector: {selector}");
+            debug!("No docs matching selector: {term}");
         }
         matching.into_iter()
     }
@@ -195,22 +196,36 @@ impl Searcher {
         segment: &Segment,
     ) -> HashMap<Document, Score> {
         match selector.op {
-            Op::Include => self
-                .get_matching_docs_with_score(&selector, segment)
-                .collect(),
+            Op::Include => {
+                let tokens = tokenize(&selector.query);
+                let mut matches: HashMap<Document, Score> = HashMap::new();
+                for term in tokens {
+                    matches = or(
+                        matches,
+                        self.get_matching_docs_with_score(&term, segment).collect(),
+                    );
+                }
+                matches
+            }
             Op::Exclude => {
                 // This is going to be inefficient. Get all docs in the index (just the id, which is a ls on the documents dir)
                 // Find all documents that _would_ match the tag:word
                 // and take the difference all - matching
                 let all_docs = self.filesystem.list_documents();
-                let matching: HashMap<Document, Score> = self
-                    .get_matching_docs_with_score(&selector, segment)
-                    .collect();
+                let tokens = tokenize(&selector.query);
+                let mut matches: HashMap<Document, Score> = HashMap::new();
+                for term in tokens {
+                    matches = or(
+                        matches,
+                        self.get_matching_docs_with_score(&term, segment).collect(),
+                    );
+                }
+
                 let result: HashMap<Document, Score> = all_docs
                     .iter()
                     .filter_map(|d| {
                         let doc = Document::new(d.to_string());
-                        match matching.contains_key(&doc) {
+                        match matches.contains_key(&doc) {
                             true => Some((doc, 0.05)), // Arbitrary 0.05 score for exclusion results
                             false => None,
                         }
@@ -238,8 +253,8 @@ impl Searcher {
                 Token::Selector(op, _, word) => {
                     let s = Selector {
                         op: op.into(),
-                        tag: None,
-                        word,
+                        field: None,
+                        query: word,
                     };
                     self.search_for_selector(s, segment)
                 }
