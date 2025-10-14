@@ -46,21 +46,37 @@ impl Lexer {
             },
             None => Op::Include,
         };
-        let mut tag_word = String::new();
+        let mut field_query = String::new();
+        let mut quote_started = false;
         while let Some(c) = self.current_char {
+            if c == '\'' && !quote_started {
+                quote_started = true;
+                self.advance();
+                while let Some(c) = self.current_char {
+                    if c != '\'' {
+                        field_query.push(c);
+                        self.advance();
+                        continue;
+                    } else {
+                        quote_started = false;
+                        break;
+                    }
+                }
+                continue;
+            }
             match c.is_alphanumeric() || c == ':' {
                 true => {
-                    tag_word.push(c);
+                    field_query.push(c);
                     self.advance();
                 }
                 false => break,
             }
         }
 
-        let parts = tag_word.split_once(":");
+        let parts = field_query.split_once(":");
         match parts {
-            Some((tag, word)) => Token::Selector(op, Some(tag.to_string()), word.to_string()),
-            _ => Token::Selector(op, None, tag_word),
+            Some((field, query)) => Token::Selector(op, Some(field.to_string()), query.to_string()),
+            _ => Token::Selector(op, None, field_query),
         }
     }
 
@@ -68,7 +84,7 @@ impl Lexer {
         self.skip_whitespace();
         match self.current_char {
             Some(c) => match c {
-                'a'..='z' | '~' | '-' => self.selector(),
+                'a'..='z' | '~' | '-' | '\'' => self.selector(),
                 '&' => {
                     self.advance();
                     Token::And
@@ -111,12 +127,12 @@ pub(crate) enum Op {
     Similar,
 }
 
-type Tag = String;
-type Word = String;
+type Field = String;
+type Query = String;
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub(crate) enum Token {
-    Selector(Op, Option<Tag>, Word),
+    Selector(Op, Option<Field>, Query),
     And,
     Or,
     LeftParen,
@@ -230,6 +246,36 @@ mod lexer_tests {
             Token::Selector(Op::Similar, Some("body".to_string()), "hound".to_string()),
             Token::RightParen,
         ];
+        for (i, t) in tokens.iter().enumerate() {
+            assert_eq!(t, expected.get(i).unwrap(), "bad token at {i}");
+        }
+    }
+
+    #[test]
+    fn test_tokenize_with_quotes_1() {
+        let query = "title:'cats and dogs'";
+        let mut lexer = Lexer::new(query);
+        let tokens = lexer.tokenize();
+        let expected = [Token::Selector(
+            Op::Include,
+            Some("title".to_string()),
+            "cats and dogs".to_string(),
+        )];
+        for (i, t) in tokens.iter().enumerate() {
+            assert_eq!(t, expected.get(i).unwrap(), "bad token at {i}");
+        }
+    }
+
+    #[test]
+    fn test_tokenize_with_quotes_2() {
+        let query = "'title for things':'cats and dogs'";
+        let mut lexer = Lexer::new(query);
+        let tokens = lexer.tokenize();
+        let expected = [Token::Selector(
+            Op::Include,
+            Some("title for things".to_string()),
+            "cats and dogs".to_string(),
+        )];
         for (i, t) in tokens.iter().enumerate() {
             assert_eq!(t, expected.get(i).unwrap(), "bad token at {i}");
         }
