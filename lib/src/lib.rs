@@ -69,7 +69,7 @@ pub struct Varro {
 
     /// The vector database to use for "similarity" queries
     #[allow(dead_code)]
-    vector_store: Arc<Mutex<VectorStore>>,
+    vector_store: Arc<VectorStore>,
 
     /// Internal search logic
     searcher: Searcher,
@@ -112,7 +112,7 @@ impl Varro {
                 }))
             }
         };
-        let vector_store = Arc::new(Mutex::new(VectorStore::new(path)));
+        let vector_store = Arc::new(VectorStore::new(path));
 
         let searcher = Searcher::new(filesystem.clone(), manifest.clone());
 
