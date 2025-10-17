@@ -15,4 +15,8 @@ documents/
 .index/
 .fastembed_cache/
 
+# rust analyzer
+rust-analyzer.toml
+
+
 .projectile
