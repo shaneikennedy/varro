@@ -42,6 +42,10 @@ impl Lexer {
                     self.advance();
                     Op::Exclude
                 }
+                '+' => {
+                    self.advance();
+                    Op::Include
+                }
                 _ => Op::Include,
             },
             None => Op::Include,
@@ -84,7 +88,7 @@ impl Lexer {
         self.skip_whitespace();
         match self.current_char {
             Some(c) => match c {
-                'a'..='z' | '~' | '-' | '\'' => self.selector(),
+                'a'..='z' | '~' | '-' | '+' | '\'' => self.selector(),
                 '&' => {
                     self.advance();
                     Token::And
@@ -230,7 +234,7 @@ mod lexer_tests {
 
     #[test]
     fn test_tokenize() {
-        let query = "title:cats & cats | -body:dog & ( title:dog | ~body:hound )";
+        let query = "title:cats & +cats | -body:dog & ( title:dog | ~body:hound )";
         let mut lexer = Lexer::new(query);
         let tokens = lexer.tokenize();
         let expected = vec![
