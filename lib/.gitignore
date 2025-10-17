@@ -7,12 +7,12 @@
 
 #/target
 
-# pierre ci
-node_modules
-
 # Testing files dirs
-documents/
 .index/
 .fastembed_cache/
+
+# rust analyzer
+rust-analyzer.toml
+
 
 .projectile

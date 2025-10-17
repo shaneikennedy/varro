@@ -6,7 +6,7 @@ use std::{
 };
 
 use bincode::config;
-use log::{debug, warn};
+use log::debug;
 
 use crate::{
     Document, Score,
@@ -15,6 +15,7 @@ use crate::{
     ranking,
     segment::{DocumentSegment, Segment},
     tokens::tokenize,
+    vector::VectorStore,
     vql::{self, Engine, Node, Token},
 };
 
@@ -148,14 +149,20 @@ impl Display for Selector {
 pub(crate) struct Searcher {
     filesystem: Arc<Box<dyn FileSystem>>,
     manifest: Arc<RwLock<Manifest>>,
+    vector_store: Arc<VectorStore>,
 }
 
 #[allow(dead_code)]
 impl Searcher {
-    pub fn new(filesystem: Arc<Box<dyn FileSystem>>, manifest: Arc<RwLock<Manifest>>) -> Self {
+    pub fn new(
+        filesystem: Arc<Box<dyn FileSystem>>,
+        manifest: Arc<RwLock<Manifest>>,
+        vector_store: Arc<VectorStore>,
+    ) -> Self {
         Self {
             filesystem,
             manifest,
+            vector_store,
         }
     }
 
@@ -234,8 +241,21 @@ impl Searcher {
                 result
             }
             Op::Similar => {
-                warn!("Varro does not support similarity selections yet, defaulting to no matches");
-                HashMap::new()
+                debug!(
+                    "Running vector search for {}, on {:#?}",
+                    selector.query, selector.field
+                );
+                let matching = match selector.field {
+                    Some(field) => self
+                        .vector_store
+                        .search_with_field(&selector.query, &field)
+                        .unwrap(),
+                    None => self.vector_store.search(&selector.query).unwrap(),
+                };
+                matching
+                    .iter()
+                    .map(|(doc, score)| (doc.clone(), 1.0 - score))
+                    .collect()
             }
         }
     }
@@ -250,10 +270,10 @@ impl Searcher {
     fn _search(&self, ast: Node, segment: &Segment) -> HashMap<Document, Score> {
         match ast {
             Node::Selector(token) => match token {
-                Token::Selector(op, _, word) => {
+                Token::Selector(op, field, word) => {
                     let s = Selector {
                         op: op.into(),
-                        field: None,
+                        field,
                         query: word,
                     };
                     self.search_for_selector(s, segment)

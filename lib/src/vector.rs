@@ -1,3 +1,4 @@
+use log::debug;
 use std::path::Path;
 use std::{collections::HashMap, sync::Mutex};
 use zerocopy::IntoBytes;
@@ -44,9 +45,8 @@ impl VectorStore {
         let embedding_query = embedding_query.first().unwrap();
 
         let db = self.db.lock().unwrap();
-        let result: Result<HashMap<Document, Score>, rusqlite::Error> = db
-            .prepare(
-                r"
+        let mut stmt = db.prepare(
+            r"
           SELECT
             document_id,
             distance
@@ -55,7 +55,8 @@ impl VectorStore {
           ORDER BY distance
           LIMIT 100
         ",
-            )?
+        )?;
+        let result: Result<HashMap<Document, Score>, rusqlite::Error> = stmt
             .query_map([embedding_query.as_bytes()], |r| {
                 Ok((Document::new(r.get(0)?), r.get(1)?))
             })?
@@ -75,9 +76,8 @@ impl VectorStore {
         let embedding_query = embedding_query.first().unwrap();
 
         let db = self.db.lock().unwrap();
-        let result: Result<HashMap<Document, Score>, rusqlite::Error> = db
-            .prepare(
-                r"
+        let mut stmt = db.prepare(
+            r"
           SELECT
             document_id,
             distance
@@ -86,7 +86,8 @@ impl VectorStore {
           ORDER BY distance
           LIMIT 100
         ",
-            )?
+        )?;
+        let result: Result<HashMap<Document, Score>, rusqlite::Error> = stmt
             .query_map([embedding_query.as_bytes(), field_name.as_bytes()], |r| {
                 Ok((Document::new(r.get(0)?), r.get(1)?))
             })?
@@ -99,6 +100,11 @@ impl VectorStore {
         let mut model = self.embedding_model.lock().unwrap();
         for field in doc.fields() {
             let embeddings = model.embed(vec![field.contents()], None).unwrap();
+            debug!(
+                "Generated embeddings: {:#?} for field: {}",
+                embeddings,
+                field.name()
+            );
             let db = self.db.lock().unwrap();
             let mut stmt =
                 db.prepare("INSERT INTO vec_items(document_id, field, embedding) VALUES (?,?,?)")?;

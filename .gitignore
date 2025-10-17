@@ -6,12 +6,7 @@
 # already existing elements were commented out
 
 #/target
-
-# pierre ci
-node_modules
-
 # Testing files dirs
-documents/
 .index/
 
 .projectile
