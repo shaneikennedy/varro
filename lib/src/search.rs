@@ -6,9 +6,10 @@ use std::{
 };
 
 use bincode::config;
-use log::{debug, warn};
+use log::debug;
 
 use crate::{
+    Document, Score,
     filesystem::FileSystem,
     manifest::Manifest,
     ranking,
@@ -16,7 +17,6 @@ use crate::{
     tokens::tokenize,
     vector::VectorStore,
     vql::{self, Engine, Node, Token},
-    Document, Score,
 };
 
 pub fn or(
@@ -241,10 +241,21 @@ impl Searcher {
                 result
             }
             Op::Similar => {
-                match selector.field {
-                    Some(field) => self.vector_store.search_with_field(&selector.query, &field).unwrap(),
+                debug!(
+                    "Running vector search for {}, on {:#?}",
+                    selector.query, selector.field
+                );
+                let matching = match selector.field {
+                    Some(field) => self
+                        .vector_store
+                        .search_with_field(&selector.query, &field)
+                        .unwrap(),
                     None => self.vector_store.search(&selector.query).unwrap(),
-                }
+                };
+                matching
+                    .iter()
+                    .map(|(doc, score)| (doc.clone(), 1.0 - score))
+                    .collect()
             }
         }
     }

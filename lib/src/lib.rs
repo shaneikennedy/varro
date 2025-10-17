@@ -280,6 +280,7 @@ impl Varro {
             }
             let doc_seg = doc_seg.unwrap();
             segment.add_docucment_segment(&doc_seg);
+            self.vector_store.insert_document(&doc_seg.document())?;
 
             // Record the total number of tokens for this doc
             total_tokens_for_flush += doc_seg.document_length();

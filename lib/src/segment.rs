@@ -4,7 +4,7 @@ use anyhow::Result;
 use bincode::{Decode, Encode, config};
 use uuid::Uuid;
 
-use crate::{document, filesystem::FileSystem, manifest::SegmentId, tokens};
+use crate::{Document, document, filesystem::FileSystem, manifest::SegmentId, tokens};
 
 /// A Segment is just a map of terms to TFDFs for a given "flush".
 #[derive(Encode, Decode, Debug)]
@@ -91,9 +91,8 @@ impl Tfdf {
     }
 }
 
-#[derive(Debug)]
 pub(crate) struct DocumentSegment {
-    document_id: String,
+    document: Document,
     // Total number of words in the doc
     document_length: i32,
     terms: HashMap<String, i32>,
@@ -102,7 +101,7 @@ pub(crate) struct DocumentSegment {
 impl DocumentSegment {
     pub fn new(doc: &document::Document) -> Self {
         let mut doc_seg = DocumentSegment {
-            document_id: doc.id(),
+            document: doc.clone(),
             document_length: 0,
             terms: HashMap::new(),
         };
@@ -119,8 +118,12 @@ impl DocumentSegment {
         doc_seg
     }
 
+    pub fn document(&self) -> Document {
+        self.document.clone()
+    }
+
     pub fn document_id(&self) -> String {
-        self.document_id.clone()
+        self.document.id()
     }
 
     pub fn document_length(&self) -> i32 {
@@ -138,7 +141,7 @@ mod document_segment_tests {
         doc.add_field("name".into(), "wow such nice test".into(), true);
         doc.add_field("body".into(), "wow such nice test again".into(), true);
         let doc_seg = DocumentSegment::new(&doc);
-        assert_eq!(doc.id(), doc_seg.document_id);
+        assert_eq!(doc.id(), doc_seg.document.id());
         assert_eq!(doc_seg.terms.get("wow"), Some(&2));
         assert_eq!(doc_seg.terms.get("such"), Some(&2));
         assert_eq!(doc_seg.terms.get("nice"), Some(&2));
@@ -152,7 +155,7 @@ mod document_segment_tests {
         doc.add_field("name".into(), "we will not index this".into(), false);
         doc.add_field("body".into(), "we will index this".into(), true);
         let doc_seg = DocumentSegment::new(&doc);
-        assert_eq!(doc.id(), doc_seg.document_id);
+        assert_eq!(doc.id(), doc_seg.document.id());
         assert_eq!(doc_seg.terms.get("index"), Some(&1));
     }
 }
