@@ -7,7 +7,6 @@
 
 #/target
 # Testing files dirs
-documents/
 .index/
 
 .projectile

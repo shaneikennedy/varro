@@ -8,7 +8,6 @@
 #/target
 
 # Testing files dirs
-documents/
 .index/
 .fastembed_cache/
 
