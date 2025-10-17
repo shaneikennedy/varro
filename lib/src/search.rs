@@ -270,10 +270,10 @@ impl Searcher {
     fn _search(&self, ast: Node, segment: &Segment) -> HashMap<Document, Score> {
         match ast {
             Node::Selector(token) => match token {
-                Token::Selector(op, _, word) => {
+                Token::Selector(op, field, word) => {
                     let s = Selector {
                         op: op.into(),
-                        field: None,
+                        field,
                         query: word,
                     };
                     self.search_for_selector(s, segment)
