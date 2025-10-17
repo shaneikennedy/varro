@@ -114,7 +114,7 @@ impl Varro {
         };
         let vector_store = Arc::new(VectorStore::new(path));
 
-        let searcher = Searcher::new(filesystem.clone(), manifest.clone());
+        let searcher = Searcher::new(filesystem.clone(), manifest.clone(), vector_store.clone());
 
         let min_segment_size = Arc::new(Mutex::new(64000000));
 

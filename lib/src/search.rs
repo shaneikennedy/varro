@@ -9,13 +9,14 @@ use bincode::config;
 use log::{debug, warn};
 
 use crate::{
-    Document, Score,
     filesystem::FileSystem,
     manifest::Manifest,
     ranking,
     segment::{DocumentSegment, Segment},
     tokens::tokenize,
+    vector::VectorStore,
     vql::{self, Engine, Node, Token},
+    Document, Score,
 };
 
 pub fn or(
@@ -148,14 +149,20 @@ impl Display for Selector {
 pub(crate) struct Searcher {
     filesystem: Arc<Box<dyn FileSystem>>,
     manifest: Arc<RwLock<Manifest>>,
+    vector_store: Arc<VectorStore>,
 }
 
 #[allow(dead_code)]
 impl Searcher {
-    pub fn new(filesystem: Arc<Box<dyn FileSystem>>, manifest: Arc<RwLock<Manifest>>) -> Self {
+    pub fn new(
+        filesystem: Arc<Box<dyn FileSystem>>,
+        manifest: Arc<RwLock<Manifest>>,
+        vector_store: Arc<VectorStore>,
+    ) -> Self {
         Self {
             filesystem,
             manifest,
+            vector_store,
         }
     }
 
@@ -234,8 +241,10 @@ impl Searcher {
                 result
             }
             Op::Similar => {
-                warn!("Varro does not support similarity selections yet, defaulting to no matches");
-                HashMap::new()
+                match selector.field {
+                    Some(field) => self.vector_store.search_with_field(&selector.query, &field).unwrap(),
+                    None => self.vector_store.search(&selector.query).unwrap(),
+                }
             }
         }
     }
