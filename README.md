@@ -43,14 +43,14 @@ curl http://127.0.0.1:8080\?q\=\emacs%26-gorilla | jq # this will query emacs & 
 Custom query language for querying the Varro search index. It's basic, but growing. Today it is essentially boolean expressions on "selectors" where a selector is of the form <operation>?<field>?:?<query-string>.
 
 Valid operations +,-,~ which are include, exclude and similar, respectively.
-- + BM25 search on the index
-- - BM25 negation, essentially run BM25 on the index and exclude these documents from the results
+- \+ BM25 search on the index
+- \- BM25 negation, essentially run BM25 on the index and exclude these documents from the results
 - ~ vector search
 
 Some valid queries:
-`title:cats & cats | -body:dog & (title:dog | ~body:hound)`
-`cats`
-`~body:'hello from the other siiiiiiiide & -artist:adelle`
+- `title:cats & cats | -body:dog & (title:dog | ~body:hound)`
+- `cats`
+- `~body:'hello from the other siiiiiiiide & -artist:adelle`
 
 #### pyvarro
 Python bindings for the varro library. This is a wip and not actively maintained. The gist is that the pyvarro/bindings rust project essentially wraps the varro library and exports python types. Then on build it generates a .so file. Copy that .so file into the pyvarro python source code (uv project) to run pyvarro with the latest varro version.
