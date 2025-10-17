@@ -7,9 +7,6 @@
 
 #/target
 
-# pierre ci
-node_modules
-
 # Testing files dirs
 documents/
 .index/
