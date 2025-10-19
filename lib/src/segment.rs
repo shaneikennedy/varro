@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashMap, HashSet},
-    path::Path,
-};
+use std::{collections::HashMap, path::Path};
 
 use anyhow::Result;
 use bincode::{Decode, Encode, config};
@@ -10,29 +7,16 @@ use uuid::Uuid;
 use crate::{Document, document, filesystem::FileSystem, manifest::SegmentId, tokens};
 
 /// A Segment is just a map of terms to TFDFs for a given "flush".
-#[derive(Encode, Decode, Debug, Clone)]
+#[derive(Encode, Decode, Debug)]
 pub(crate) struct Segment {
-    id: String,
-    /// List of documents that exist in this segment
-    documents: HashSet<String>,
     pub(crate) term_index: HashMap<String, Tfdf>,
 }
 
 impl Segment {
     pub fn new() -> Self {
         Self {
-            id: Uuid::new_v4().to_string(),
-            documents: HashSet::new(),
             term_index: HashMap::new(),
         }
-    }
-
-    pub fn id(&self) -> String {
-        self.id.clone()
-    }
-
-    pub fn documents(&self) -> HashSet<String> {
-        self.documents.clone()
     }
 
     // For a segment, update the existing term_index with all
@@ -50,7 +34,6 @@ impl Segment {
                 self.term_index.insert(term.to_string(), tfdf);
             }
         }
-        self.documents.insert(seg.document_id());
     }
 
     // Used during segment compaction
@@ -64,32 +47,23 @@ impl Segment {
                 })
                 .or_insert(tfdf);
         }
-        for doc in seg.documents {
-            self.documents.insert(doc);
-        }
     }
 
     pub fn write_to_fs(&self, filesystem: &dyn FileSystem) -> Result<(SegmentId, usize)> {
         let config = config::standard();
         let bytes = bincode::encode_to_vec(self, config)?;
+        let segment_id = Uuid::new_v4().to_string();
         filesystem.write_to_index(
-            Path::new(&format!("{}.seg", self.id.clone())),
+            Path::new(&format!("{}.seg", segment_id.clone())),
             bytes.clone(),
         )?;
-        Ok((self.id.clone(), bytes.len()))
-    }
-
-    pub fn read_from_fs(segment_id: &str, filesystem: &dyn FileSystem) -> Result<Segment> {
-        let contents = filesystem.read_from_index(Path::new(&format!("{segment_id}.seg")))?;
-        let config = config::standard();
-        let (decoded, _): (Segment, usize) = bincode::decode_from_slice(&contents[..], config)?;
-        Ok(decoded)
+        Ok((segment_id, bytes.len()))
     }
 }
 
 /// A TFDF is holds the info for which documents (id, the String in the term_freq map) have a given term and it's count (the i32 in the term_freq map)
 /// and the total number of documents that the term appears in
-#[derive(Encode, Decode, Debug, Clone)]
+#[derive(Encode, Decode, Debug)]
 pub(crate) struct Tfdf {
     pub term: String,
 
@@ -211,12 +185,6 @@ mod segment_tests {
                 .iter()
                 .any(|(doc_id, _)| doc_id == &doc1.id())
         );
-        assert!(
-            tfdf.term_freq
-                .iter()
-                .any(|(doc_id, _)| doc_id == &doc1.id())
-        );
-        assert!(segment.documents.contains(&doc1.id()));
     }
 
     #[test]
@@ -224,7 +192,6 @@ mod segment_tests {
         let mut segment = Segment::new();
         let mut tfdf = Tfdf::new("deux");
         tfdf.term_freq.push(("doc1".into(), 0.43));
-        segment.documents.insert("doc1".into());
         segment.term_index.insert("deux".into(), tfdf);
 
         let mut segment_to_merge = Segment::new();
@@ -233,14 +200,11 @@ mod segment_tests {
         segment_to_merge.term_index.insert("deux".into(), tfdf);
         let mut tfdf = Tfdf::new("coucou");
         tfdf.term_freq.push(("doc2".into(), 0.43));
-        segment_to_merge.documents.insert("doc2".into());
         segment_to_merge.term_index.insert("coucou".into(), tfdf);
         segment.add_segment(segment_to_merge);
 
         assert!(segment.term_index.contains_key("deux"));
         assert!(segment.term_index.contains_key("coucou"));
         assert_eq!(segment.term_index.get("deux").unwrap().term_freq.len(), 2);
-        assert!(segment.documents.contains(&"doc1".to_string()));
-        assert!(segment.documents.contains(&"doc2".to_string()));
     }
 }
