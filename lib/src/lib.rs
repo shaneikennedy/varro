@@ -270,8 +270,6 @@ impl Varro {
     pub fn flush(&self) -> Result<()> {
         let mut segment = Segment::new();
         let mut docs = self.buffer.lock().unwrap();
-        let mut total_tokens_for_flush = 0;
-        let total_docs_for_flush = docs.len();
         for doc_seg in docs.drain(0..) {
             let doc_seg = doc_seg.join();
             if doc_seg.is_err() {
@@ -281,9 +279,6 @@ impl Varro {
             let doc_seg = doc_seg.unwrap();
             segment.add_docucment_segment(&doc_seg);
             self.vector_store.insert_document(&doc_seg.document())?;
-
-            // Record the total number of tokens for this doc
-            total_tokens_for_flush += doc_seg.document_length();
             self.manifest.write().unwrap().total_docs += 1;
         }
         // Reset the buffer size
@@ -300,8 +295,8 @@ impl Varro {
             .insert(segment_id.clone(), segment_size);
         manifest_guard.average_document_length = (manifest_guard.total_docs as f64
             * manifest_guard.average_document_length
-            + total_tokens_for_flush as f64)
-            / (manifest_guard.total_docs + total_docs_for_flush) as f64;
+            + segment.token_count() as f64)
+            / (manifest_guard.total_docs + segment.documents().len()) as f64;
         debug!(
             "Manifest object now contains segments: {:#?}",
             manifest_guard.segments
