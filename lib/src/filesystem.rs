@@ -19,6 +19,7 @@ pub(crate) trait FileSystem: Send + Sync {
     fn write_to_index(&self, filename: &Path, contents: Vec<u8>) -> Result<()>;
     fn write_to_document(&self, filename: &Path, contents: Vec<u8>) -> Result<()>;
     fn write_to_manifest(&self, contents: Vec<u8>) -> Result<()>;
+    fn remove_from_index(&self, filename: &Path) -> Result<()>;
 }
 
 pub(crate) struct LocalFileSystem {
@@ -47,13 +48,15 @@ impl LocalFileSystem {
     }
 
     fn read(&self, path: &PathBuf) -> Result<Vec<u8>> {
-        let contents = fs::read(path).with_context(|| "unable to read file")?;
-        Ok(contents)
+        fs::read(path).context("unable to read file")
     }
 
-    fn write(&self, filename: &PathBuf, contents: Vec<u8>) -> Result<()> {
-        fs::write(filename, contents).with_context(|| "failed to write contents")?;
-        Ok(())
+    fn write(&self, path: &PathBuf, contents: Vec<u8>) -> Result<()> {
+        fs::write(path, contents).with_context(|| "failed to write contents")
+    }
+
+    fn delete(&self, path: &PathBuf) -> Result<()> {
+        fs::remove_file(path).context("Unable to remove file")
     }
 
     fn list(&self) -> HashSet<String> {
@@ -90,6 +93,10 @@ impl FileSystem for LocalFileSystem {
 
     fn write_to_manifest(&self, contents: Vec<u8>) -> Result<()> {
         self.write_to_index(Path::new(MANIFEST_FILENAME), contents)
+    }
+
+    fn remove_from_index(&self, filename: &Path) -> Result<()> {
+        self.delete(&self.index_path.join(filename))
     }
 }
 
@@ -128,6 +135,10 @@ impl TempFileSystem {
         Ok(())
     }
 
+    fn delete(&self, path: &PathBuf) -> Result<()> {
+        fs::remove_file(path).context("Unable to remove file")
+    }
+
     #[allow(dead_code)]
     fn index_path(&self) -> PathBuf {
         self.index_path.clone()
@@ -164,6 +175,10 @@ impl FileSystem for TempFileSystem {
 
     fn write_to_manifest(&self, contents: Vec<u8>) -> Result<()> {
         self.write_to_index(Path::new(MANIFEST_FILENAME), contents)
+    }
+
+    fn remove_from_index(&self, filename: &Path) -> Result<()> {
+        self.delete(&self.index_path.join(filename))
     }
 
     fn list_documents(&self) -> HashSet<String> {
@@ -214,6 +229,13 @@ impl S3FileSystem {
         Ok(())
     }
 
+    fn delete(&self, filename: &str) -> Result<()> {
+        self.bucket
+            .delete_object(filename)
+            .context("failed to delete file")?;
+        Ok(())
+    }
+
     fn list(&self) -> HashSet<String> {
         let objects = self.bucket.list(self.documents_path.clone(), None).unwrap();
         objects.into_iter().map(|o| o.name).collect()
@@ -255,6 +277,10 @@ impl FileSystem for S3FileSystem {
     fn write_to_manifest(&self, contents: Vec<u8>) -> Result<()> {
         self.write_to_index(Path::new(MANIFEST_FILENAME), contents)
     }
+
+    fn remove_from_index(&self, filename: &Path) -> Result<()> {
+        self.delete(format!("{}/{}", self.index_path, filename.to_str().unwrap()).as_str())
+    }
 }
 
 #[cfg(test)]
@@ -269,5 +295,26 @@ mod filesystem_temp_tests {
         assert!(Path::exists(&path.join("documents")));
         drop(fs);
         assert!(!Path::exists(&path));
+    }
+
+    #[test]
+    fn test_read_from_index() -> Result<()> {
+        let fs = TempFileSystem::new(None).unwrap();
+        let path = fs.index_path();
+        let _ = fs.write_to_index(Path::new("file"), vec![1, 2, 3, 4, 5]);
+        assert!(Path::exists(&path.join("file")));
+        let contents = fs.read_from_index(&path.join("file"))?;
+        assert_eq!(contents, vec![1, 2, 3, 4, 5]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_remove_from_index() -> Result<()> {
+        let fs = TempFileSystem::new(None).unwrap();
+        let path = fs.index_path();
+        let _ = fs.write_to_index(Path::new("file"), vec![1, 2, 3, 4, 5]);
+        fs.remove_from_index(&path.join("file"))?;
+        assert!(!Path::exists(&path.join("file")));
+        Ok(())
     }
 }
