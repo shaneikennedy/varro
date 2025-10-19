@@ -124,9 +124,9 @@ impl Varro {
         let segment_compactor = SegmentCompactor::new(
             stop.clone(),
             manifest.clone(),
-            path.to_path_buf(),
             min_segment_size.clone(),
             compaction_freq.clone(),
+            filesystem.clone(),
         );
         let segment_compactor = Mutex::new(Some(thread::spawn(move || segment_compactor.run())));
 
