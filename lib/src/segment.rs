@@ -15,7 +15,6 @@ use crate::{Document, document, filesystem::FileSystem, manifest::SegmentId, tok
 pub(crate) struct Segment {
     /// The ID of the segment
     id: String,
-
     /// List of documents that exist in this segment
     documents: HashSet<String>,
 
@@ -39,7 +38,6 @@ impl Segment {
         self.id.clone()
     }
 
-    #[allow(dead_code)]
     pub fn documents(&self) -> HashSet<String> {
         self.documents.clone()
     }
@@ -104,11 +102,18 @@ impl Segment {
         filesystem.write_to_index(Path::new(&format!("{}.seg", self.id())), bytes.clone())?;
         Ok((self.id(), bytes.len()))
     }
+
+    pub fn read_from_fs(segment_id: &str, filesystem: &dyn FileSystem) -> Result<Segment> {
+        let contents = filesystem.read_from_index(Path::new(&format!("{segment_id}.seg")))?;
+        let config = config::standard();
+        let (decoded, _): (Segment, usize) = bincode::decode_from_slice(&contents[..], config)?;
+        Ok(decoded)
+    }
 }
 
 /// A TFDF is holds the info for which documents (id, the String in the term_freq map) have a given term and it's count (the i32 in the term_freq map)
 /// and the total number of documents that the term appears in
-#[derive(Encode, Decode, Debug)]
+#[derive(Encode, Decode, Debug, Clone)]
 pub(crate) struct Tfdf {
     pub term: String,
 
@@ -225,6 +230,11 @@ mod segment_tests {
         let tfdf = segment.term_index.get("deux").unwrap();
         assert_eq!(tfdf.term, "deux");
         assert_eq!(tfdf.term_freq.len(), 1);
+        assert!(
+            tfdf.term_freq
+                .iter()
+                .any(|(doc_id, _)| doc_id == &doc1.id())
+        );
         assert!(
             tfdf.term_freq
                 .iter()

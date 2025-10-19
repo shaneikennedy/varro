@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -168,6 +168,81 @@ impl Varro {
     /// The total number of docs in the Varro index
     pub fn index_size(&self) -> usize {
         self.manifest.read().unwrap().total_docs
+    }
+
+    /// Remove a document from the Varro index
+    pub fn remove(&self, document_id: &str) -> Result<()> {
+        let doc_to_delete = self.get_doc_by_id(document_id.to_string());
+        if doc_to_delete.is_none() {
+            return Err(Error::msg(format!(
+                "Document {} does not exist in the index",
+                document_id
+            )));
+        }
+        let doc_seg_to_delete = DocumentSegment::new(&doc_to_delete.unwrap());
+        let manifest_guard = self.manifest.read().unwrap();
+        // loop through the segments until you find the one with docucment_id
+        let mut valid_docs = HashSet::new();
+        let mut segment_to_recreate: Option<String> = None;
+        for (segment_id, _) in manifest_guard.segments.clone() {
+            let segment = Segment::read_from_fs(&segment_id, &**self.filesystem)?;
+            // create a list of all the other docs that appear in that segment
+            if segment.documents().contains(document_id) {
+                segment_to_recreate = Some(segment.id());
+                for doc in segment.documents() {
+                    valid_docs.insert(doc);
+                }
+                break;
+            }
+        }
+        drop(manifest_guard);
+        assert!(segment_to_recreate.is_some());
+
+        // reconstruct the segment from those documents
+        let mut new_segment = Segment::new();
+        for doc in valid_docs {
+            let document = self.get_doc_by_id(doc.to_string());
+            if let Some(d) = document {
+                let doc_seg = DocumentSegment::new(&d);
+                new_segment.add_docucment_segment(&doc_seg);
+            }
+        }
+
+        // write segment
+        new_segment.write_to_fs(&**self.filesystem)?;
+
+        // update manifest
+        let mut manifest_guard = self.manifest.write().unwrap();
+        manifest_guard
+            .segments
+            .remove(&segment_to_recreate.clone().unwrap());
+
+        manifest_guard.average_document_length = ((manifest_guard.average_document_length
+            * manifest_guard.total_docs as f64)
+            - doc_seg_to_delete.document_length() as f64)
+            / (manifest_guard.total_docs - 1) as f64;
+        manifest_guard.total_docs -= 1;
+        debug!(
+            "Manifest object now contains segments: {:#?}, total docs: {}, and avg doc length: {}",
+            manifest_guard.segments,
+            manifest_guard.total_docs,
+            manifest_guard.average_document_length,
+        );
+        let config = config::standard();
+        drop(manifest_guard);
+        let manifest_guard = self.manifest.read().unwrap();
+        let bytes = bincode::encode_to_vec(&*manifest_guard, config)?;
+        drop(manifest_guard);
+        self.filesystem.write_to_manifest(bytes)?;
+
+        // remove old segment
+        self.filesystem
+            .remove_from_index(Path::new(&format!("{}.seg", segment_to_recreate.unwrap())))?;
+
+        // remove doc for doc_id
+        self.filesystem
+            .remove_from_documents(Path::new(document_id))?;
+        Ok(())
     }
 
     /// Index a document, this takes a Document, stores it, adds the index to the document buffer, and returns whether it was successfull or not
@@ -417,6 +492,23 @@ mod varro_tests {
         let results: Vec<(Document, Score)> = results.collect();
         assert_eq!(results.len(), 1);
         assert_eq!(results.first().unwrap().0.id(), doc.id());
+        Ok(())
+    }
+
+    #[test]
+    fn test_remove() -> Result<()> {
+        let index = Varro::new(Path::new(""), FileSystemType::Temp).unwrap();
+        let mut doc = Document::default();
+        doc.add_field("name".into(), "varro testing".into(), true);
+        index.index(doc.clone()).unwrap();
+        index.flush()?;
+        assert_eq!(index.index_size(), 1);
+
+        index.remove(&doc.id())?;
+        let results = index.search("varro".into(), None);
+        let results: Vec<(Document, Score)> = results.collect();
+        assert_eq!(results.len(), 0);
+        assert_eq!(index.index_size(), 0);
         Ok(())
     }
 }

@@ -20,6 +20,7 @@ pub(crate) trait FileSystem: Send + Sync {
     fn write_to_document(&self, filename: &Path, contents: Vec<u8>) -> Result<()>;
     fn write_to_manifest(&self, contents: Vec<u8>) -> Result<()>;
     fn remove_from_index(&self, filename: &Path) -> Result<()>;
+    fn remove_from_documents(&self, filename: &Path) -> Result<()>;
 }
 
 pub(crate) struct LocalFileSystem {
@@ -97,6 +98,10 @@ impl FileSystem for LocalFileSystem {
 
     fn remove_from_index(&self, filename: &Path) -> Result<()> {
         self.delete(&self.index_path.join(filename))
+    }
+
+    fn remove_from_documents(&self, filename: &Path) -> Result<()> {
+        self.delete(&self.documents_path.join(filename))
     }
 }
 
@@ -183,6 +188,10 @@ impl FileSystem for TempFileSystem {
 
     fn list_documents(&self) -> HashSet<String> {
         self.list()
+    }
+
+    fn remove_from_documents(&self, filename: &Path) -> Result<()> {
+        self.delete(&self.documents_path.join(filename))
     }
 }
 
@@ -280,6 +289,10 @@ impl FileSystem for S3FileSystem {
 
     fn remove_from_index(&self, filename: &Path) -> Result<()> {
         self.delete(format!("{}/{}", self.index_path, filename.to_str().unwrap()).as_str())
+    }
+
+    fn remove_from_documents(&self, filename: &Path) -> Result<()> {
+        self.delete(format!("{}/{}", self.documents_path, filename.to_str().unwrap()).as_str())
     }
 }
 
