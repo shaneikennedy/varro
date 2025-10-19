@@ -1,4 +1,8 @@
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+    sync::atomic::{AtomicI32, Ordering::SeqCst},
+};
 
 use anyhow::Result;
 use bincode::{Decode, Encode, config};
@@ -9,20 +13,53 @@ use crate::{Document, document, filesystem::FileSystem, manifest::SegmentId, tok
 /// A Segment is just a map of terms to TFDFs for a given "flush".
 #[derive(Encode, Decode, Debug)]
 pub(crate) struct Segment {
+    /// The ID of the segment
+    id: String,
+
+    /// List of documents that exist in this segment
+    documents: HashSet<String>,
+
+    /// Token count, used when updating the manifest
+    token_count: AtomicI32,
+
     pub(crate) term_index: HashMap<String, Tfdf>,
 }
 
 impl Segment {
     pub fn new() -> Self {
         Self {
+            id: Uuid::new_v4().to_string(),
+            documents: HashSet::new(),
             term_index: HashMap::new(),
+            token_count: AtomicI32::new(0),
         }
+    }
+
+    pub fn id(&self) -> String {
+        self.id.clone()
+    }
+
+    #[allow(dead_code)]
+    pub fn documents(&self) -> HashSet<String> {
+        self.documents.clone()
+    }
+
+    pub fn token_count(&self) -> i32 {
+        self.token_count.load(SeqCst)
     }
 
     // For a segment, update the existing term_index with all
     // the terms and corresponding TFs from DocumentSegment
     // if the term doesn't already exist in the term index, insert a new one
     pub fn add_docucment_segment(&mut self, seg: &DocumentSegment) {
+        let current_token_count = self.token_count.load(SeqCst);
+        let new_token_count = current_token_count.checked_add(seg.document_length);
+        // Panic here is somehow a segment gets to big....
+        // I guess in the future this needs to be handled with some
+        // saturated flag so that we can create a new segment for this document
+        // and compaction knows not to clean it up
+        self.token_count.store(new_token_count.unwrap(), SeqCst);
+
         for (term, _) in seg.terms.iter() {
             if self.term_index.contains_key(term) {
                 self.term_index
@@ -34,10 +71,19 @@ impl Segment {
                 self.term_index.insert(term.to_string(), tfdf);
             }
         }
+        self.documents.insert(seg.document_id());
     }
 
     // Used during segment compaction
     pub fn add_segment(&mut self, seg: Segment) {
+        let current_token_count = self.token_count.load(SeqCst);
+        let new_token_count = current_token_count.checked_add(seg.token_count.load(SeqCst));
+        // Panic here is somehow a segment gets to big....
+        // I guess in the future this needs to be handled with some
+        // saturated flag so that we can create a new segment for this document
+        // and compaction knows not to clean it up
+        self.token_count.store(new_token_count.unwrap(), SeqCst);
+
         for (term, tfdf) in seg.term_index {
             self.term_index
                 .entry(term)
@@ -47,17 +93,16 @@ impl Segment {
                 })
                 .or_insert(tfdf);
         }
+        for doc in seg.documents {
+            self.documents.insert(doc);
+        }
     }
 
     pub fn write_to_fs(&self, filesystem: &dyn FileSystem) -> Result<(SegmentId, usize)> {
         let config = config::standard();
         let bytes = bincode::encode_to_vec(self, config)?;
-        let segment_id = Uuid::new_v4().to_string();
-        filesystem.write_to_index(
-            Path::new(&format!("{}.seg", segment_id.clone())),
-            bytes.clone(),
-        )?;
-        Ok((segment_id, bytes.len()))
+        filesystem.write_to_index(Path::new(&format!("{}.seg", self.id())), bytes.clone())?;
+        Ok((self.id(), bytes.len()))
     }
 }
 
@@ -185,6 +230,8 @@ mod segment_tests {
                 .iter()
                 .any(|(doc_id, _)| doc_id == &doc1.id())
         );
+        assert!(segment.documents.contains(&doc1.id()));
+        assert_eq!(segment.token_count.load(SeqCst), 6);
     }
 
     #[test]
@@ -192,7 +239,9 @@ mod segment_tests {
         let mut segment = Segment::new();
         let mut tfdf = Tfdf::new("deux");
         tfdf.term_freq.push(("doc1".into(), 0.43));
+        segment.documents.insert("doc1".into());
         segment.term_index.insert("deux".into(), tfdf);
+        segment.token_count.store(500, SeqCst);
 
         let mut segment_to_merge = Segment::new();
         let mut tfdf = Tfdf::new("deux");
@@ -200,11 +249,16 @@ mod segment_tests {
         segment_to_merge.term_index.insert("deux".into(), tfdf);
         let mut tfdf = Tfdf::new("coucou");
         tfdf.term_freq.push(("doc2".into(), 0.43));
+        segment_to_merge.token_count.store(200, SeqCst);
+        segment_to_merge.documents.insert("doc2".into());
         segment_to_merge.term_index.insert("coucou".into(), tfdf);
         segment.add_segment(segment_to_merge);
 
         assert!(segment.term_index.contains_key("deux"));
         assert!(segment.term_index.contains_key("coucou"));
         assert_eq!(segment.term_index.get("deux").unwrap().term_freq.len(), 2);
+        assert!(segment.documents.contains("doc1"));
+        assert!(segment.documents.contains("doc2"));
+        assert_eq!(segment.token_count.load(SeqCst), 700);
     }
 }
