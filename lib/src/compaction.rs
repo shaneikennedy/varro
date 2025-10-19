@@ -1,6 +1,5 @@
 use std::{
-    fs,
-    path::PathBuf,
+    path::Path,
     sync::{Arc, Mutex, RwLock},
     thread,
     time::Duration,
@@ -11,31 +10,30 @@ use bincode::config;
 use log::{debug, error};
 use uuid::Uuid;
 
-use crate::{manifest::Manifest, segment::Segment};
+use crate::{filesystem::FileSystem, manifest::Manifest, segment::Segment};
 
 pub(crate) struct SegmentCompactor {
     stop_signal: Arc<Mutex<bool>>,
     manifest: Arc<RwLock<Manifest>>,
-    index_path: PathBuf,
     min_segment_size: Arc<Mutex<usize>>,
     compaction_freq: Arc<Mutex<Duration>>,
+    filesystem: Arc<Box<dyn FileSystem>>,
 }
 
-// TODO: This needs to work on our filesystem abstraction now, not the fs module
 impl SegmentCompactor {
     pub fn new(
         stop_signal: Arc<Mutex<bool>>,
         manifest: Arc<RwLock<Manifest>>,
-        index_path: PathBuf,
         min_segment_size: Arc<Mutex<usize>>,
         compaction_freq: Arc<Mutex<Duration>>,
+        filesystem: Arc<Box<dyn FileSystem>>,
     ) -> Self {
         SegmentCompactor {
             stop_signal,
             manifest,
-            index_path,
             min_segment_size,
             compaction_freq,
+            filesystem,
         }
     }
 
@@ -57,8 +55,7 @@ impl SegmentCompactor {
                 // Merge all small segments
                 for (seg_id, _) in segments_to_merge.clone() {
                     let segment_file = format!("{seg_id}.seg");
-                    let segment_path = self.index_path.join(&segment_file);
-                    let contents = fs::read(&segment_path);
+                    let contents = self.filesystem.read_from_index(Path::new(&segment_file));
                     let segment = match contents {
                         Ok(c) => {
                             let config = config::standard();
@@ -77,7 +74,9 @@ impl SegmentCompactor {
                 let config = config::standard();
                 let bytes = bincode::encode_to_vec(merged_segment, config).unwrap();
                 let segment_id = Uuid::new_v4().to_string();
-                let res = fs::write(self.index_path.join(segment_id.clone() + ".seg"), &bytes);
+                let res = self
+                    .filesystem
+                    .write_to_index(Path::new(&(segment_id.clone() + ".seg")), bytes.clone());
                 match res {
                     Ok(_) => debug!("Successfully wrote new compacted segment {segment_id}"),
                     Err(_) => error!("Problem writing compacted segment"),
@@ -94,7 +93,9 @@ impl SegmentCompactor {
                 // write the new manifest file
                 let manifest_guard = self.manifest.read().unwrap();
                 let bytes = bincode::encode_to_vec(&*manifest_guard, config).unwrap();
-                let res = fs::write(self.index_path.join("manifest.varro"), bytes);
+                let res = self
+                    .filesystem
+                    .write_to_index(Path::new("manifest.varro"), bytes);
                 match res {
                     Ok(_) => debug!("Successfully wrote new manifest"),
                     Err(_) => error!("Unable to write new manifest"),
@@ -103,7 +104,9 @@ impl SegmentCompactor {
 
                 // Cleanup merged segments
                 for (seg_id, _) in segments_to_merge {
-                    let res = fs::remove_file(self.index_path.join(format!("{seg_id}.seg")));
+                    let res = self
+                        .filesystem
+                        .remove_from_index(Path::new(&format!("{seg_id}.seg")));
                     match res {
                         Ok(_) => debug!("Deleted {seg_id}.seg after compaction"),
                         Err(_) => error!("Problem deleting {seg_id}.seg after compaction"),
