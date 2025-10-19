@@ -1,4 +1,7 @@
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
 use anyhow::Result;
 use bincode::{Decode, Encode, config};
@@ -9,12 +12,15 @@ use crate::{Document, document, filesystem::FileSystem, manifest::SegmentId, tok
 /// A Segment is just a map of terms to TFDFs for a given "flush".
 #[derive(Encode, Decode, Debug)]
 pub(crate) struct Segment {
+    /// List of documents that exist in this segment
+    documents: HashSet<String>,
     pub(crate) term_index: HashMap<String, Tfdf>,
 }
 
 impl Segment {
     pub fn new() -> Self {
         Self {
+            documents: HashSet::new(),
             term_index: HashMap::new(),
         }
     }
@@ -34,6 +40,7 @@ impl Segment {
                 self.term_index.insert(term.to_string(), tfdf);
             }
         }
+        self.documents.insert(seg.document_id());
     }
 
     // Used during segment compaction
@@ -46,6 +53,9 @@ impl Segment {
                     t.term_freq.extend(tfdf.term_freq.clone());
                 })
                 .or_insert(tfdf);
+        }
+        for doc in seg.documents {
+            self.documents.insert(doc);
         }
     }
 
@@ -185,6 +195,7 @@ mod segment_tests {
                 .iter()
                 .any(|(doc_id, _)| doc_id == &doc1.id())
         );
+        assert!(segment.documents.contains(&doc1.id()));
     }
 
     #[test]
@@ -192,6 +203,7 @@ mod segment_tests {
         let mut segment = Segment::new();
         let mut tfdf = Tfdf::new("deux");
         tfdf.term_freq.push(("doc1".into(), 0.43));
+        segment.documents.insert("doc1".into());
         segment.term_index.insert("deux".into(), tfdf);
 
         let mut segment_to_merge = Segment::new();
@@ -200,11 +212,14 @@ mod segment_tests {
         segment_to_merge.term_index.insert("deux".into(), tfdf);
         let mut tfdf = Tfdf::new("coucou");
         tfdf.term_freq.push(("doc2".into(), 0.43));
+        segment_to_merge.documents.insert("doc2".into());
         segment_to_merge.term_index.insert("coucou".into(), tfdf);
         segment.add_segment(segment_to_merge);
 
         assert!(segment.term_index.contains_key("deux"));
         assert!(segment.term_index.contains_key("coucou"));
         assert_eq!(segment.term_index.get("deux").unwrap().term_freq.len(), 2);
+        assert!(segment.documents.contains("doc1"));
+        assert!(segment.documents.contains("doc2"));
     }
 }
