@@ -101,7 +101,7 @@ impl FileSystem for LocalFileSystem {
     }
 
     fn remove_from_documents(&self, filename: &Path) -> Result<()> {
-	self.delete(&self.documents_path.join(filename))
+        self.delete(&self.documents_path.join(filename))
     }
 }
 
@@ -191,7 +191,7 @@ impl FileSystem for TempFileSystem {
     }
 
     fn remove_from_documents(&self, filename: &Path) -> Result<()> {
-	self.delete(&self.documents_path.join(filename))
+        self.delete(&self.documents_path.join(filename))
     }
 }
 
@@ -292,9 +292,8 @@ impl FileSystem for S3FileSystem {
     }
 
     fn remove_from_documents(&self, filename: &Path) -> Result<()> {
-	self.delete(format!("{}/{}", self.documents_path, filename.to_str().unwrap()).as_str())
+        self.delete(format!("{}/{}", self.documents_path, filename.to_str().unwrap()).as_str())
     }
-
 }
 
 #[cfg(test)]
