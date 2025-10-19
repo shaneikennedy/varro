@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -168,6 +168,48 @@ impl Varro {
     /// The total number of docs in the Varro index
     pub fn index_size(&self) -> usize {
         self.manifest.read().unwrap().total_docs
+    }
+
+    /// Remove a document from the Varro index
+    pub fn remove(&self, document_id: &str) -> Result<()> {
+        let manifest_guard = self.manifest.read().unwrap();
+        // loop through the segments until you find the one with docucment_id
+        let mut valid_docs = HashSet::new();
+        let mut segment_with_doc = None;
+        for (segment_id, _) in manifest_guard.segments.clone() {
+            let segment = Segment::read_from_fs(&segment_id, &**self.filesystem)?;
+            // create a list of all the other docs that appear in that segment
+            if segment.documents().contains(document_id) {
+                segment_with_doc = Some(segment.clone());
+                for doc in segment.documents() {
+                    valid_docs.insert(doc);
+                }
+                break;
+            }
+        }
+        assert!(segment_with_doc.is_some());
+
+        // reconstruct the segment from those documents
+        let mut new_segment = Segment::new();
+        for doc in valid_docs {
+            let document = self.get_doc_by_id(doc.to_string());
+            if let Some(d) = document {
+                let doc_seg = DocumentSegment::new(&d);
+                new_segment.add_docucment_segment(&doc_seg);
+            }
+        }
+
+        // write segment
+        new_segment.write_to_fs(&**self.filesystem)?;
+        // update manifest
+        let mut manifest_guard = self.manifest.write().unwrap();
+        manifest_guard
+            .segments
+            .remove(&segment_with_doc.unwrap().id());
+        // TODO recalulate stuff in the manifest, pending changes to the segment model to hold that information
+        // remove old segment
+        // remove doc for doc_id
+        Ok(())
     }
 
     /// Index a document, this takes a Document, stores it, adds the index to the document buffer, and returns whether it was successfull or not
