@@ -254,6 +254,10 @@ impl Varro {
         drop(manifest_guard);
         self.filesystem.write_to_manifest(bytes)?;
 
+        // Remove vector search entries for old, and re-insert new
+        self.vector_store.remove_document(document)?;
+        self.vector_store.insert_document(document)?;
+
         // remove old segment
         self.filesystem
             .remove_from_index(Path::new(&format!("{}.seg", segment_to_recreate.unwrap())))?;
@@ -270,7 +274,8 @@ impl Varro {
                 document_id
             )));
         }
-        let doc_seg_to_delete = DocumentSegment::new(&doc_to_delete.unwrap());
+        let doc_to_delete = doc_to_delete.unwrap();
+        let doc_seg_to_delete = DocumentSegment::new(&doc_to_delete);
         let manifest_guard = self.manifest.read().unwrap();
         // loop through the segments until you find the one with docucment_id
         let mut valid_docs = HashSet::new();
@@ -330,6 +335,9 @@ impl Varro {
         let bytes = bincode::encode_to_vec(&*manifest_guard, config)?;
         drop(manifest_guard);
         self.filesystem.write_to_manifest(bytes)?;
+
+        // Remove vector search entries
+        self.vector_store.remove_document(&doc_to_delete)?;
 
         // remove old segment
         self.filesystem
