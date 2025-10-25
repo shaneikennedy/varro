@@ -5,11 +5,23 @@ use bincode::{Decode, Encode};
 use uuid::Uuid;
 
 /// The model representing a field in a document
-#[derive(PartialEq, Eq, Hash, Encode, Decode, Clone)]
+#[derive(Eq, Encode, Decode, Clone)]
 pub struct Field {
     name: String,
     contents: String,
     index: bool,
+}
+
+impl Hash for Field {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+    }
+}
+
+impl PartialEq for Field {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
 }
 
 impl Field {
@@ -63,11 +75,15 @@ impl Document {
     }
 
     pub fn add_field(&mut self, name: String, contents: String, index: bool) {
-        self.fields.insert(Field {
+        let new_field = Field {
             name,
             contents,
             index,
-        });
+        };
+        if self.fields.contains(&new_field) {
+            self.fields.remove(&new_field);
+        }
+        self.fields.insert(new_field);
     }
 
     pub fn fields(&self) -> impl Iterator<Item = &Field> {
