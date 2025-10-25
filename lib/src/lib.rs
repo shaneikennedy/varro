@@ -12,6 +12,7 @@ use log::{debug, error, info, warn};
 mod compaction;
 pub mod document;
 mod filesystem;
+mod flusher;
 mod manifest;
 mod ranking;
 mod search;
@@ -27,6 +28,7 @@ use crate::compaction::SegmentCompactor;
 #[cfg(feature = "s3")]
 use crate::filesystem::S3FileSystem;
 use crate::filesystem::{FileSystem, LocalFileSystem, TempFileSystem};
+use crate::flusher::Flusher;
 use crate::manifest::Manifest;
 use crate::search::Searcher;
 use crate::segment::{DocumentSegment, Segment};
@@ -73,6 +75,9 @@ pub struct Varro {
 
     /// Internal search logic
     searcher: Searcher,
+
+    /// Internal flushing logic
+    flusher: Flusher,
 }
 
 pub enum FileSystemType {
@@ -130,6 +135,8 @@ impl Varro {
         );
         let segment_compactor = Mutex::new(Some(thread::spawn(move || segment_compactor.run())));
 
+        let flusher = Flusher::new(manifest.clone(), filesystem.clone(), vector_store.clone());
+
         let varro = Varro {
             buffer: Mutex::new(Vec::new()),
             buffer_size: AtomicUsize::new(0),
@@ -142,6 +149,7 @@ impl Varro {
             filesystem,
             searcher,
             vector_store,
+            flusher,
         };
         Ok(varro)
     }
@@ -431,44 +439,11 @@ impl Varro {
 
     /// Flush the indexes to disk, this needs to happen before a document is searchable
     pub fn flush(&self) -> Result<()> {
-        let mut segment = Segment::new();
-        let mut docs = self.buffer.lock().unwrap();
-        for doc_seg in docs.drain(0..) {
-            let doc_seg = doc_seg.join();
-            if doc_seg.is_err() {
-                error!("Problem indexing document ????????");
-                return Err(Error::msg("problem indexing this document"));
-            }
-            let doc_seg = doc_seg.unwrap();
-            segment.add_docucment_segment(&doc_seg);
-            self.vector_store.insert_document(&doc_seg.document())?;
-            self.manifest.write().unwrap().total_docs += 1;
-        }
-        // Reset the buffer size
+        let mut buffer_guard = self.buffer.lock().unwrap();
+        let docs = buffer_guard.drain(0..);
+        self.flusher.flush_new_docs(docs)?;
         self.buffer_size.swap(0, Ordering::SeqCst);
-
-        debug!("Writting new segmenet to disk");
-        let (segment_id, segment_size) = segment.write_to_fs(&**self.filesystem)?;
-
-        // Update the manifest file
-        debug!("Start update manifest file");
-        let mut manifest_guard = self.manifest.write().unwrap();
-        manifest_guard
-            .segments
-            .insert(segment_id.clone(), segment_size);
-        manifest_guard.average_document_length = (manifest_guard.total_docs as f64
-            * manifest_guard.average_document_length
-            + segment.token_count() as f64)
-            / (manifest_guard.total_docs + segment.documents().len()) as f64;
-        debug!(
-            "Manifest object now contains segments: {:#?}",
-            manifest_guard.segments
-        );
-        let config = config::standard();
-        drop(manifest_guard);
-        let manifest_guard = self.manifest.read().unwrap();
-        let bytes = bincode::encode_to_vec(&*manifest_guard, config)?;
-        self.filesystem.write_to_manifest(bytes)
+        Ok(())
     }
 }
 
