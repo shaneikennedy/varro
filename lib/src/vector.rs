@@ -104,4 +104,11 @@ impl VectorStore {
         }
         Ok(())
     }
+
+    pub fn remove_document(&self, doc: &Document) -> Result<()> {
+        let db = self.db.lock().unwrap();
+        let mut stmt = db.prepare("DELETE FROM vec_items WHERE document_id = ?")?;
+        stmt.execute(rusqlite::params![doc.id()])?;
+        Ok(())
+    }
 }
