@@ -9,7 +9,6 @@ use sqlite_vec::sqlite3_vec_init;
 
 use crate::{Document, Score};
 
-#[allow(dead_code)]
 pub struct VectorStore {
     embedding_model: Mutex<TextEmbedding>,
     db: Mutex<Connection>,
@@ -36,7 +35,6 @@ impl VectorStore {
         }
     }
 
-    #[allow(dead_code)]
     pub fn search(&self, query: &str) -> Result<HashMap<Document, Score>> {
         let search = vec![query];
         let mut model = self.embedding_model.lock().unwrap();
@@ -63,7 +61,6 @@ impl VectorStore {
         result.context("Error executing query")
     }
 
-    #[allow(dead_code)]
     pub fn search_with_field(
         &self,
         query: &str,
@@ -94,7 +91,6 @@ impl VectorStore {
         result.context("Error executing query")
     }
 
-    #[allow(dead_code)]
     pub fn insert_document(&self, doc: &Document) -> Result<()> {
         let mut model = self.embedding_model.lock().unwrap();
         for field in doc.fields() {
