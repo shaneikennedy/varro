@@ -6,7 +6,7 @@ Marcus Terentius Varro was a Roman polymath, scholar, and writer, often consider
 Varro is a text-based search engine inspired by Apache Lucene, attempting to offer a familiar API and general concepts, but with no attempt to be a drop in replacement for Lucene.
 
 ## TODOs
-- [ ] Document updates by id
+- [x] Document updates by id
 - [x] Delete document by id (and remove indexed data)
 - [x] Field based indexing (default for a field is true but allow the user to choose to turn off a field)
 - [ ] "Highlighting" i.e store where the token is for the document

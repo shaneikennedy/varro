@@ -1,4 +1,3 @@
-use log::debug;
 use std::path::Path;
 use std::{collections::HashMap, sync::Mutex};
 use zerocopy::IntoBytes;
@@ -100,11 +99,6 @@ impl VectorStore {
         let mut model = self.embedding_model.lock().unwrap();
         for field in doc.fields() {
             let embeddings = model.embed(vec![field.contents()], None).unwrap();
-            debug!(
-                "Generated embeddings: {:#?} for field: {}",
-                embeddings,
-                field.name()
-            );
             let db = self.db.lock().unwrap();
             let mut stmt =
                 db.prepare("INSERT INTO vec_items(document_id, field, embedding) VALUES (?,?,?)")?;
