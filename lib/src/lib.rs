@@ -190,7 +190,9 @@ impl Varro {
             if segment.documents().contains(document_id) {
                 segment_to_recreate = Some(segment.id());
                 for doc in segment.documents() {
-                    valid_docs.insert(doc);
+                    if doc != document_id {
+                        valid_docs.insert(doc);
+                    }
                 }
                 break;
             }
@@ -209,13 +211,16 @@ impl Varro {
         }
 
         // write segment
-        new_segment.write_to_fs(&**self.filesystem)?;
+        let (_, new_seg_size) = new_segment.write_to_fs(&**self.filesystem)?;
 
         // update manifest
         let mut manifest_guard = self.manifest.write().unwrap();
         manifest_guard
             .segments
             .remove(&segment_to_recreate.clone().unwrap());
+        manifest_guard
+            .segments
+            .insert(new_segment.id(), new_seg_size);
 
         manifest_guard.average_document_length = ((manifest_guard.average_document_length
             * manifest_guard.total_docs as f64)
@@ -505,10 +510,16 @@ mod varro_tests {
         assert_eq!(index.index_size(), 1);
 
         index.remove(&doc.id())?;
+
+        // Assert deleted doc is not searchable
         let results = index.search("varro".into(), None);
         let results: Vec<(Document, Score)> = results.collect();
         assert_eq!(results.len(), 0);
         assert_eq!(index.index_size(), 0);
+
+        // Assert deleted doc is not retrievable
+        let result = index.retrieve(doc.id());
+        assert!(result.is_none());
         Ok(())
     }
 }
