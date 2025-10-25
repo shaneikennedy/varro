@@ -170,6 +170,89 @@ impl Varro {
         self.manifest.read().unwrap().total_docs
     }
 
+    pub fn update(&self, document: &Document) -> Result<()> {
+        let old_version = self.get_doc_by_id(document.id());
+        if old_version.is_none() {
+            return Err(Error::msg(format!(
+                "Document {} does not exist in the index",
+                document.id()
+            )));
+        }
+        let doc_seg_to_delete = DocumentSegment::new(&old_version.unwrap());
+        let manifest_guard = self.manifest.read().unwrap();
+        // loop through the segments until you find the one with docucment_id
+        let mut valid_docs = HashSet::new();
+        let mut segment_to_recreate: Option<String> = None;
+        for (segment_id, _) in manifest_guard.segments.clone() {
+            let segment = Segment::read_from_fs(&segment_id, &**self.filesystem)?;
+            // create a list of all the other docs that appear in that segment
+            if segment.documents().contains(&document.id()) {
+                segment_to_recreate = Some(segment.id());
+                for doc in segment.documents() {
+                    if doc != document.id() {
+                        valid_docs.insert(doc);
+                    }
+                }
+                break;
+            }
+        }
+        debug!("valid docs: {:#?}", valid_docs);
+        drop(manifest_guard);
+        assert!(segment_to_recreate.is_some());
+
+        // reconstruct the segment from those documents
+        let mut new_segment = Segment::new();
+        for doc in valid_docs {
+            let document = self.get_doc_by_id(doc.to_string());
+            if let Some(d) = document {
+                let doc_seg = DocumentSegment::new(&d);
+                new_segment.add_docucment_segment(&doc_seg);
+            }
+        }
+        // Add the updated document to the new segment
+        let updated_dog_seg = &DocumentSegment::new(document);
+        new_segment.add_docucment_segment(updated_dog_seg);
+
+        // overwrite old document with new document
+        self.write_doc(document)?;
+
+        // write segment
+        let (_, new_seg_size) = new_segment.write_to_fs(&**self.filesystem)?;
+
+        // update manifest
+        let mut manifest_guard = self.manifest.write().unwrap();
+        manifest_guard
+            .segments
+            .remove(&segment_to_recreate.clone().unwrap());
+
+        manifest_guard
+            .segments
+            .insert(new_segment.id(), new_seg_size);
+        manifest_guard.average_document_length = ((manifest_guard.average_document_length
+            * manifest_guard.total_docs as f64)
+            - doc_seg_to_delete.document_length() as f64
+            + updated_dog_seg.document_length() as f64)
+            / (manifest_guard.total_docs) as f64;
+        debug!(
+            "Manifest object now contains segments: {:#?}, total docs: {}, and avg doc length: {}",
+            manifest_guard.segments,
+            manifest_guard.total_docs,
+            manifest_guard.average_document_length,
+        );
+        let config = config::standard();
+        drop(manifest_guard);
+        let manifest_guard = self.manifest.read().unwrap();
+        let bytes = bincode::encode_to_vec(&*manifest_guard, config)?;
+        drop(manifest_guard);
+        self.filesystem.write_to_manifest(bytes)?;
+
+        // remove old segment
+        self.filesystem
+            .remove_from_index(Path::new(&format!("{}.seg", segment_to_recreate.unwrap())))?;
+
+        Ok(())
+    }
+
     /// Remove a document from the Varro index
     pub fn remove(&self, document_id: &str) -> Result<()> {
         let doc_to_delete = self.get_doc_by_id(document_id.to_string());
@@ -520,6 +603,41 @@ mod varro_tests {
         // Assert deleted doc is not retrievable
         let result = index.retrieve(doc.id());
         assert!(result.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_update() -> Result<()> {
+        let index = Varro::new(Path::new(""), FileSystemType::Temp).unwrap();
+        let mut doc = Document::default();
+        doc.add_field("name".into(), "varro testing".into(), true);
+        index.index(doc.clone()).unwrap();
+        index.flush()?;
+        assert_eq!(index.index_size(), 1);
+
+        doc.add_field("name".into(), "varro testing update".into(), true);
+        index.update(&doc)?;
+
+        // assert the new version is retrievable
+        let updated_doc = index.retrieve(doc.id());
+        assert!(updated_doc.is_some(), "doc not found in index");
+        let updated_doc = updated_doc.unwrap();
+        let new_name = updated_doc.get_field("name".into()).unwrap();
+        assert_eq!(new_name.contents(), "varro testing update");
+        assert_eq!(index.index_size(), 1, "index size not only 1");
+
+        // assert the new version is searchable
+        let opts = SearchOptions::new().with_include_documents(true);
+        let results: Vec<(Document, Score)> = index.search("varro".into(), Some(opts)).collect();
+        assert_eq!(results.len(), 1, "document not searchable in index");
+        let (updated_doc, _) = results.first().unwrap();
+        assert_eq!(
+            updated_doc.fields().count(),
+            1,
+            "document somehow doesn't have any fields"
+        );
+        let new_name = updated_doc.get_field("name".into()).unwrap();
+        assert_eq!(new_name.contents(), "varro testing update");
         Ok(())
     }
 }
