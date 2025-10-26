@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -28,7 +27,7 @@ use crate::compaction::SegmentCompactor;
 #[cfg(feature = "s3")]
 use crate::filesystem::S3FileSystem;
 use crate::filesystem::{FileSystem, LocalFileSystem, TempFileSystem};
-use crate::flusher::Flusher;
+use crate::flusher::{FlushEventType, Flusher};
 use crate::manifest::Manifest;
 use crate::search::Searcher;
 use crate::segment::{DocumentSegment, Segment};
@@ -36,17 +35,6 @@ use crate::vector::VectorStore;
 
 /// The model for indexing, querying and retrieveing documents
 pub struct Varro {
-    /// Append only in-memory buffer before flushing to disk
-    buffer: Mutex<Vec<JoinHandle<DocumentSegment>>>,
-
-    /// Internal counter for how big the buffer is for flushing purposes.
-    buffer_size: AtomicUsize,
-
-    /// Maximum buffer size, when the document buffer reaches this size in bytes
-    /// Varro will automatically flush the buffer to disk and these documents
-    /// will become searchable. Default is 50MB or 50_000_000.
-    max_buffer_size: Mutex<usize>,
-
     /// Segment compactor is the handle to the background thread that's
     /// compacting segments when they get too big
     segment_compactor: Mutex<Option<JoinHandle<Result<()>>>>,
@@ -70,7 +58,6 @@ pub struct Varro {
     filesystem: Arc<Box<dyn FileSystem>>,
 
     /// The vector database to use for "similarity" queries
-    #[allow(dead_code)]
     vector_store: Arc<VectorStore>,
 
     /// Internal search logic
@@ -138,9 +125,6 @@ impl Varro {
         let flusher = Flusher::new(manifest.clone(), filesystem.clone(), vector_store.clone());
 
         let varro = Varro {
-            buffer: Mutex::new(Vec::new()),
-            buffer_size: AtomicUsize::new(0),
-            max_buffer_size: Mutex::new(50_000_000),
             stop,
             segment_compactor,
             manifest,
@@ -169,7 +153,7 @@ impl Varro {
     /// Update the Varro instance with a new `max_buffer_size` to control when
     /// Varro flushes automatically
     pub fn with_max_buffer_size(self, size: usize) -> Self {
-        *self.max_buffer_size.lock().unwrap() = size;
+        self.flusher.with_max_buffer_size(size);
         self
     }
 
@@ -353,17 +337,10 @@ impl Varro {
     pub fn index(&self, doc: Document) -> Result<()> {
         // First things first get this thing written to disk
         self.write_doc(&doc)?;
-        self.buffer_size.fetch_add(doc.size(), Ordering::SeqCst);
 
         // Then add it to the varro buffer to be indexed
-        let mut docs = self.buffer.lock().unwrap();
-        let handle = thread::spawn(move || DocumentSegment::new(&doc));
-        docs.push(handle);
+        self.flusher.submit(doc, FlushEventType::Insert)?;
 
-        // Force a flush when the buffer size gets to the set max limit
-        if self.buffer_size.load(Ordering::SeqCst) > *self.max_buffer_size.lock().unwrap() {
-            self.flush()?;
-        }
         Ok(())
     }
 
@@ -447,10 +424,7 @@ impl Varro {
 
     /// Flush the indexes to disk, this needs to happen before a document is searchable
     pub fn flush(&self) -> Result<()> {
-        let mut buffer_guard = self.buffer.lock().unwrap();
-        let docs = buffer_guard.drain(0..);
-        self.flusher.flush_new_docs(docs)?;
-        self.buffer_size.swap(0, Ordering::SeqCst);
+        self.flusher.flush()?;
         Ok(())
     }
 }

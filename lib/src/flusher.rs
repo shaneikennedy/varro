@@ -1,19 +1,64 @@
-use anyhow::{Error, Result};
+use anyhow::Result;
 use bincode::config;
 use log::{debug, error};
-use std::sync::{Arc, RwLock};
+use std::{
+    sync::{
+        Arc, Mutex, RwLock,
+        atomic::{AtomicUsize, Ordering},
+    },
+    thread::{self, JoinHandle},
+};
 
 use crate::{
+    Document,
     filesystem::FileSystem,
     manifest::Manifest,
     segment::{DocumentSegment, Segment},
     vector::VectorStore,
 };
 
+pub(crate) enum FlushEventType {
+    #[allow(dead_code)]
+    Delete,
+    #[allow(dead_code)]
+    Update,
+    Insert,
+}
+
+enum FlushEvent {
+    #[allow(dead_code)]
+    Delete(DeleteEvent),
+    #[allow(dead_code)]
+    Update(UpdateEvent),
+    Insert(InsertEvent),
+}
+
+#[allow(dead_code)]
+pub(crate) struct DeleteEvent {}
+
+#[allow(dead_code)]
+pub(crate) struct UpdateEvent {}
+
+pub(crate) struct InsertEvent {
+    doc_seg: DocumentSegment,
+}
+
+impl InsertEvent {
+    pub(crate) fn new(doc: Document) -> Self {
+        Self {
+            doc_seg: DocumentSegment::new(&doc),
+        }
+    }
+}
+
 pub(crate) struct Flusher {
     manifest: Arc<RwLock<Manifest>>,
     filesystem: Arc<Box<dyn FileSystem>>,
     vector_store: Arc<VectorStore>,
+    buffer: Mutex<Vec<JoinHandle<FlushEvent>>>,
+    /// Internal counter for how big the buffer is for flushing purposes.
+    buffer_size: AtomicUsize,
+    max_buffer_size: Mutex<usize>,
 }
 
 impl Flusher {
@@ -26,21 +71,63 @@ impl Flusher {
             manifest,
             filesystem,
             vector_store,
+            buffer: Mutex::new(Vec::new()),
+            buffer_size: AtomicUsize::new(0),
+            max_buffer_size: Mutex::new(50_000_000),
         }
     }
 
-    pub(crate) fn flush_new_docs(
-        &self,
-        events: impl Iterator<Item = std::thread::JoinHandle<DocumentSegment>>,
-    ) -> Result<()> {
-        let mut segment = Segment::new();
-        for doc_seg in events {
-            let doc_seg = doc_seg.join();
-            if doc_seg.is_err() {
-                error!("Problem indexing document ????????");
-                return Err(Error::msg("problem indexing this document"));
+    /// Update the Flusher instance with a new `max_buffer_size` to control when
+    /// Varro flushes automatically
+    pub(crate) fn with_max_buffer_size(&self, size: usize) {
+        *self.max_buffer_size.lock().unwrap() = size;
+    }
+
+    pub(crate) fn submit(&self, doc: Document, event_type: FlushEventType) -> Result<()> {
+        let mut buffer_guard = self.buffer.lock().unwrap();
+        let doc_for_thread = doc.clone();
+        let handle = match event_type {
+            FlushEventType::Delete => todo!(),
+            FlushEventType::Update => todo!(),
+            FlushEventType::Insert => {
+                thread::spawn(|| FlushEvent::Insert(InsertEvent::new(doc_for_thread)))
             }
-            let doc_seg = doc_seg.unwrap();
+        };
+
+        buffer_guard.push(handle);
+        self.buffer_size.fetch_add(doc.size(), Ordering::SeqCst);
+        if self.buffer_size.load(Ordering::SeqCst) > *self.max_buffer_size.lock().unwrap() {
+            self.flush()?;
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn flush(&self) -> Result<()> {
+        let mut buffer_guard = self.buffer.lock().unwrap();
+        let mut insert_events = Vec::new();
+        let mut delete_events = Vec::new();
+        let mut update_events = Vec::new();
+        for event in buffer_guard.drain(0..) {
+            let event = event.join();
+            match event {
+                Ok(e) => match e {
+                    FlushEvent::Delete(delete_event) => delete_events.push(delete_event),
+                    FlushEvent::Update(update_event) => update_events.push(update_event),
+                    FlushEvent::Insert(insert_event) => insert_events.push(insert_event),
+                },
+                Err(_) => error!("problem joining on flush event"),
+            }
+        }
+        self.flush_inserts(insert_events)?;
+        self.buffer_size.swap(0, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn flush_inserts(&self, insert_events: Vec<InsertEvent>) -> Result<()> {
+        let mut segment = Segment::new();
+        for event in insert_events {
+            let doc_seg = event.doc_seg;
             segment.add_docucment_segment(&doc_seg);
             self.vector_store.insert_document(&doc_seg.document())?;
             self.manifest.write().unwrap().total_docs += 1;
