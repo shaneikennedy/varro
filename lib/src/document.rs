@@ -1,8 +1,12 @@
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
+use std::path::Path;
 
-use bincode::{Decode, Encode};
+use anyhow::Result;
+use bincode::{Decode, Encode, config};
 use uuid::Uuid;
+
+use crate::filesystem::FileSystem;
 
 /// The model representing a field in a document
 #[derive(Eq, Encode, Decode, Clone)]
@@ -107,5 +111,26 @@ impl Document {
             size += size_of_val(&field.index)
         }
         size
+    }
+
+    pub(crate) fn get_doc_by_id(id: String, filesystem: &dyn FileSystem) -> Option<Document> {
+        let file = filesystem.read_from_documents(Path::new(&id.clone()));
+        match file {
+            Ok(f) => {
+                let config = config::standard();
+                let (decoded, _): (Document, usize) =
+                    bincode::decode_from_slice(&f[..], config).unwrap();
+                Some(decoded)
+            }
+            Err(_) => None,
+        }
+    }
+
+    /// Write a Document to the documents_path for durability and retrieval
+    pub(crate) fn write_doc(doc: &Document, filesystem: &dyn FileSystem) -> Result<()> {
+        let id = doc.id().clone();
+        let config = config::standard();
+        let bytes = bincode::encode_to_vec(doc, config)?;
+        filesystem.write_to_document(Path::new(&id.clone()), bytes)
     }
 }
