@@ -8,5 +8,6 @@
 #/target
 # Testing files dirs
 .index/
+pyvarro/.fastembed_cache
 
 .projectile
