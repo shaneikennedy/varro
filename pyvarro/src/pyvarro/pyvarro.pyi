@@ -3,7 +3,7 @@ from datetime import timedelta
 
 class Document:
     def __init__(self, id: str) -> None: ...
-    def add_field(self, name: str, contents: str, index: bool) -> None: ...
+    def add_field(self, name: str, contents: str, index: Optional[bool]) -> None: ...
     def size(self) -> int: ...
 
 class Field:
@@ -16,7 +16,6 @@ class SearchOperator:
     And: SearchOperator
 
 class RankingType:
-    Tfidf: RankingType
     Bm25: RankingType
 
 class SearchOptions:

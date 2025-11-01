@@ -10,6 +10,7 @@
 # Testing files dirs
 .index/
 .fastembed_cache/
+vectorstore.sqlite
 
 # rust analyzer
 rust-analyzer.toml

@@ -13,7 +13,6 @@ This wrapper is built using [PyO3](https://pyo3.rs/), ensuring seamless integrat
 - Fast indexing and searching of Documents.
 - Highly configurable and tunable to your needs.
 - Local filesystem or s3 for durability.
-- Compatible with Python 3.8+.
 
 ## Installation
 
@@ -25,43 +24,9 @@ pip install pyvarro
 
 No additional dependencies are required beyond the standard library.
 
-## Usage
+## Examples
 
-### Basic Example
-
-```python
-from pyvarro import PyVarro, Document
-
-# Create a PyVarro instance with the default options
-search_index = PyVarro(None, None, None)
-
-# Add a document to the index
-contents = "searching from pyvarro"
-doc = Document(str(uuid.uuid4()))
-doc.add_field("name", "document", False)
-doc.add_field("content", contents, False)
-varro.index(doc)
-
-# Flush to make the document searchable
-varro.flush()
-
-# Search
-results = varro.search("pyvarro", None)
-for res in results:
-	print(res)
-
-```
-
-Expect the Rust wrapper to be significantly faster for large inputs.
-
-## Contributing
-
-Contributions are welcome! Please:
-
-1. Fork the repository.
-2. Create a feature branch.
-3. Submit a pull request.
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+Checkout the examples/ directory:
+1. `uv run examples/ingest.py` to fill the index with the test documents that I've included in ../lib/documents for development purposes. The docs are posts from my blog in markdown
+2. `uv run examples/search.py` to run a quick script that searches the index
+3. `uv run uvicorn examples.webserver:app --reload` to run a fastapi backend that has a /search endpoint that takes a query parameter `q` and runs a search on the index. Use `curl http://127.0.0.1:8000/search\?q\=~name%3A%27docker%20tips%27 | jq` to test.

@@ -9,6 +9,12 @@ authors = [
 requires-python = ">=3.12"
 dependencies = []
 
+[dependency-groups]
+dev = [
+  "fastapi",
+  "uvicorn",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
