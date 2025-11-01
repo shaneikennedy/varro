@@ -21,14 +21,14 @@ mod pyvarro {
             }
         }
 
-	pub fn id(&self) -> String {
-	    self.doc.id()
-	}
+        pub fn id(&self) -> String {
+            self.doc.id()
+        }
 
         /// Add a field to the document
-	#[pyo3(signature = (name, contents, index=true, /))]
+        #[pyo3(signature = (name, contents, index=true, /))]
         pub fn add_field(&mut self, name: String, contents: String, index: Option<bool>) {
-	    let index = index.unwrap_or(true);
+            let index = index.unwrap_or(true);
             self.doc.add_field(name, contents, index);
         }
 
@@ -144,9 +144,9 @@ mod pyvarro {
         /// `compaction_frequency` controls how often compaction should happen
         /// `max_buffer_size` controls when Varro will automatically trigger a flush
         #[new]
-	#[pyo3(signature = (path, min_segment_size=None, compaction_frequency=None, max_buffer_size=None, /))]
+        #[pyo3(signature = (path, min_segment_size=None, compaction_frequency=None, max_buffer_size=None, /))]
         pub fn new(
-	    path: &str,
+            path: &str,
             min_segment_size: Option<usize>,
             compaction_frequency: Option<Duration>,
             max_buffer_size: Option<usize>,
@@ -189,7 +189,7 @@ mod pyvarro {
 
         /// Text search, given an input string query the index and return a list of Document Ids
         /// and their corresponding TDIDF score (higher is better) that match the search
-	#[pyo3(signature = (query, options=None, /))]
+        #[pyo3(signature = (query, options=None, /))]
         pub fn search(
             &self,
             query: String,
