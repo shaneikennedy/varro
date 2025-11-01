@@ -21,8 +21,14 @@ mod pyvarro {
             }
         }
 
+	pub fn id(&self) -> String {
+	    self.doc.id()
+	}
+
         /// Add a field to the document
-        pub fn add_field(&mut self, name: String, contents: String, index: bool) {
+	#[pyo3(signature = (name, contents, index=true, /))]
+        pub fn add_field(&mut self, name: String, contents: String, index: Option<bool>) {
+	    let index = index.unwrap_or(true);
             self.doc.add_field(name, contents, index);
         }
 
@@ -36,7 +42,7 @@ mod pyvarro {
         fn from(value: varro::Document) -> Self {
             let mut doc = Document::new(value.id());
             for field in value.fields() {
-                doc.add_field(field.name(), field.contents(), false);
+                doc.add_field(field.name(), field.contents(), Some(true));
             }
             doc
         }
@@ -138,12 +144,14 @@ mod pyvarro {
         /// `compaction_frequency` controls how often compaction should happen
         /// `max_buffer_size` controls when Varro will automatically trigger a flush
         #[new]
+	#[pyo3(signature = (path, min_segment_size=None, compaction_frequency=None, max_buffer_size=None, /))]
         pub fn new(
+	    path: &str,
             min_segment_size: Option<usize>,
             compaction_frequency: Option<Duration>,
             max_buffer_size: Option<usize>,
         ) -> PyResult<PyVarro> {
-            let mut varro = Varro::new(Path::new(".index"), FileSystemType::Local).unwrap();
+            let mut varro = Varro::new(Path::new(path), FileSystemType::Local).unwrap();
             if let Some(min_segment_size) = min_segment_size {
                 varro = varro.with_min_segment_size(min_segment_size);
             }
@@ -181,6 +189,7 @@ mod pyvarro {
 
         /// Text search, given an input string query the index and return a list of Document Ids
         /// and their corresponding TDIDF score (higher is better) that match the search
+	#[pyo3(signature = (query, options=None, /))]
         pub fn search(
             &self,
             query: String,
