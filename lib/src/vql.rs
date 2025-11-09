@@ -237,7 +237,7 @@ mod lexer_tests {
         let query = "title:cats & +cats | -body:dog & ( title:dog | ~body:hound )";
         let mut lexer = Lexer::new(query);
         let tokens = lexer.tokenize();
-        let expected = vec![
+        let expected = [
             Token::Selector(Op::Include, Some("title".to_string()), "cats".to_string()),
             Token::And,
             Token::Selector(Op::Include, None, "cats".to_string()),
@@ -298,7 +298,7 @@ mod lexer_tests {
         let query = "title:cats & cats          | -body:dog";
         let mut lexer = Lexer::new(query);
         let tokens = lexer.tokenize();
-        let expected = vec![
+        let expected = [
             Token::Selector(Op::Include, Some("title".to_string()), "cats".to_string()),
             Token::And,
             Token::Selector(Op::Include, None, "cats".to_string()),
