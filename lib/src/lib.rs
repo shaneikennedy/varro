@@ -216,37 +216,33 @@ impl Varro {
 
         // Get all the segment files and load them into memory, merging them all into a master segment
         let manifest_guard = self.manifest.read().unwrap();
-        let mut master_segment = Segment::new();
         debug!(
             "Searching through segment files: {:#?}",
             manifest_guard.segments.keys()
         );
+        let mut matching_docs: HashMap<Document, Score> = HashMap::new();
         for f in manifest_guard.segments.keys() {
             let segment_file = format!("{f}.seg");
             let contents = self.filesystem.read_from_index(Path::new(&segment_file));
-            let segment = match contents {
+            match contents {
                 Ok(c) => {
                     let config = config::standard();
-                    let (decoded, _): (Segment, usize) =
+                    let (segment, _): (Segment, usize) =
                         bincode::decode_from_slice(&c[..], config).unwrap();
-                    Some(decoded)
+		    self.searcher
+			.search(&query, &segment)
+			.iter()
+			.for_each(|(doc, score)| {
+			    matching_docs.insert(doc.clone(), *score);
+			});
                 }
-                Err(_) => None,
+                Err(_) => error!("Problem deserializing a segment file, could be corrupted."),
             };
 
-            // Merge the segments
-            match segment {
-                Some(s) => {
-                    master_segment.add_segment(s);
-                }
-                None => warn!("Unable to read segment file {:#?}", segment_file),
-            }
         }
         drop(manifest_guard);
 
         let opts = options.unwrap_or_default();
-        // Collect a map of terms to docs for which the term appears, and it's tfidf score
-        let mut matching_docs = self.searcher.search(&query, &master_segment);
         if opts.include_documents {
             matching_docs = matching_docs
                 .iter()
