@@ -220,6 +220,8 @@ impl Varro {
             "Searching through segment files: {:#?}",
             manifest_guard.segments.keys()
         );
+        let opts = options.unwrap_or_default();
+        let multi_token_operator = opts.search_operator;
         let mut matching_docs: HashMap<Document, Score> = HashMap::new();
         for f in manifest_guard.segments.keys() {
             let segment_file = format!("{f}.seg");
@@ -229,20 +231,18 @@ impl Varro {
                     let config = config::standard();
                     let (segment, _): (Segment, usize) =
                         bincode::decode_from_slice(&c[..], config).unwrap();
-		    self.searcher
-			.search(&query, &segment)
-			.iter()
-			.for_each(|(doc, score)| {
-			    matching_docs.insert(doc.clone(), *score);
-			});
+                    self.searcher
+                        .search(&query, &segment, &multi_token_operator.into())
+                        .iter()
+                        .for_each(|(doc, score)| {
+                            matching_docs.insert(doc.clone(), *score);
+                        });
                 }
                 Err(_) => error!("Problem deserializing a segment file, could be corrupted."),
             };
-
         }
         drop(manifest_guard);
 
-        let opts = options.unwrap_or_default();
         if opts.include_documents {
             matching_docs = matching_docs
                 .iter()
@@ -291,10 +291,19 @@ impl Drop for Varro {
 
 pub type Score = f64;
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub enum SearchOperator {
     OR,
     AND,
+}
+
+impl From<SearchOperator> for search::SearchOperator {
+    fn from(value: SearchOperator) -> search::SearchOperator {
+        match value {
+            SearchOperator::AND => search::SearchOperator::And,
+            SearchOperator::OR => search::SearchOperator::Or,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -341,7 +350,7 @@ impl SearchOptions {
     }
 
     pub fn search_operator(&self) -> SearchOperator {
-        self.search_operator.clone()
+        self.search_operator
     }
 }
 

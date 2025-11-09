@@ -19,6 +19,12 @@ use crate::{
     vql::{self, Engine, Node, Token},
 };
 
+#[derive(Clone, Copy)]
+pub(crate) enum SearchOperator {
+    And,
+    Or,
+}
+
 pub fn or(
     existing: HashMap<Document, Score>,
     matches: HashMap<Document, Score>,
@@ -201,16 +207,23 @@ impl Searcher {
         &self,
         selector: Selector,
         segment: &Segment,
+        multi_token_operator: &SearchOperator,
     ) -> HashMap<Document, Score> {
         match selector.op {
             Op::Include => {
                 let tokens = tokenize(&selector.query);
                 let mut matches: HashMap<Document, Score> = HashMap::new();
                 for term in tokens {
-                    matches = or(
-                        matches,
-                        self.get_matching_docs_with_score(&term, segment).collect(),
-                    );
+                    matches = match multi_token_operator {
+                        SearchOperator::And => and(
+                            matches,
+                            self.get_matching_docs_with_score(&term, segment).collect(),
+                        ),
+                        SearchOperator::Or => or(
+                            matches,
+                            self.get_matching_docs_with_score(&term, segment).collect(),
+                        ),
+                    }
                 }
                 matches
             }
@@ -222,10 +235,16 @@ impl Searcher {
                 let tokens = tokenize(&selector.query);
                 let mut matches: HashMap<Document, Score> = HashMap::new();
                 for term in tokens {
-                    matches = or(
-                        matches,
-                        self.get_matching_docs_with_score(&term, segment).collect(),
-                    );
+                    matches = match multi_token_operator {
+                        SearchOperator::And => and(
+                            matches,
+                            self.get_matching_docs_with_score(&term, segment).collect(),
+                        ),
+                        SearchOperator::Or => or(
+                            matches,
+                            self.get_matching_docs_with_score(&term, segment).collect(),
+                        ),
+                    }
                 }
 
                 let result: HashMap<Document, Score> = all_docs
@@ -260,14 +279,24 @@ impl Searcher {
         }
     }
 
-    pub fn search(&self, query: &str, segment: &Segment) -> HashMap<Document, Score> {
+    pub fn search(
+        &self,
+        query: &str,
+        segment: &Segment,
+        multi_token_operator: &SearchOperator,
+    ) -> HashMap<Document, Score> {
         let engine = Engine::new();
         let ast = engine.execute(query);
         debug!("Ast from query: {:#?}", ast);
-        self._search(ast, segment)
+        self._search(ast, segment, multi_token_operator)
     }
 
-    fn _search(&self, ast: Node, segment: &Segment) -> HashMap<Document, Score> {
+    fn _search(
+        &self,
+        ast: Node,
+        segment: &Segment,
+        multi_token_operator: &SearchOperator,
+    ) -> HashMap<Document, Score> {
         match ast {
             Node::Selector(token) => match token {
                 Token::Selector(op, field, word) => {
@@ -276,13 +305,13 @@ impl Searcher {
                         field,
                         query: word,
                     };
-                    self.search_for_selector(s, segment)
+                    self.search_for_selector(s, segment, multi_token_operator)
                 }
                 _ => panic!("Something went wrong in selector"),
             },
             Node::BinaryOp(node, token, node1) => {
-                let left = self._search(*node, segment);
-                let right = self._search(*node1, segment);
+                let left = self._search(*node, segment, multi_token_operator);
+                let right = self._search(*node1, segment, multi_token_operator);
                 match token {
                     Token::And => and(left, right),
                     Token::Or => or(left, right),
