@@ -306,7 +306,7 @@ impl From<SearchOperator> for search::SearchOperator {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct SearchOptions {
     /// Whether or not to return the full document object in the search response.
     /// By default only the Document ID is returned to be used to fetch at a later time,
@@ -337,7 +337,7 @@ impl SearchOptions {
 
     pub fn with_include_documents(&mut self, include_documents: bool) -> Self {
         self.include_documents = include_documents;
-        self.clone()
+        *self
     }
 
     pub fn include_documents(&self) -> bool {
@@ -346,7 +346,7 @@ impl SearchOptions {
 
     pub fn with_search_operator(&mut self, operator: SearchOperator) -> Self {
         self.search_operator = operator;
-        self.clone()
+        *self
     }
 
     pub fn search_operator(&self) -> SearchOperator {
