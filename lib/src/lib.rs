@@ -216,37 +216,33 @@ impl Varro {
 
         // Get all the segment files and load them into memory, merging them all into a master segment
         let manifest_guard = self.manifest.read().unwrap();
-        let mut master_segment = Segment::new();
         debug!(
             "Searching through segment files: {:#?}",
             manifest_guard.segments.keys()
         );
+        let opts = options.unwrap_or_default();
+        let multi_token_operator = opts.search_operator;
+        let mut matching_docs: HashMap<Document, Score> = HashMap::new();
         for f in manifest_guard.segments.keys() {
             let segment_file = format!("{f}.seg");
             let contents = self.filesystem.read_from_index(Path::new(&segment_file));
-            let segment = match contents {
+            match contents {
                 Ok(c) => {
                     let config = config::standard();
-                    let (decoded, _): (Segment, usize) =
+                    let (segment, _): (Segment, usize) =
                         bincode::decode_from_slice(&c[..], config).unwrap();
-                    Some(decoded)
+                    self.searcher
+                        .search(&query, &segment, &multi_token_operator.into())
+                        .iter()
+                        .for_each(|(doc, score)| {
+                            matching_docs.insert(doc.clone(), *score);
+                        });
                 }
-                Err(_) => None,
+                Err(_) => error!("Problem deserializing a segment file, could be corrupted."),
             };
-
-            // Merge the segments
-            match segment {
-                Some(s) => {
-                    master_segment.add_segment(s);
-                }
-                None => warn!("Unable to read segment file {:#?}", segment_file),
-            }
         }
         drop(manifest_guard);
 
-        let opts = options.unwrap_or_default();
-        // Collect a map of terms to docs for which the term appears, and it's tfidf score
-        let mut matching_docs = self.searcher.search(&query, &master_segment);
         if opts.include_documents {
             matching_docs = matching_docs
                 .iter()
@@ -295,13 +291,22 @@ impl Drop for Varro {
 
 pub type Score = f64;
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub enum SearchOperator {
     OR,
     AND,
 }
 
-#[derive(Clone)]
+impl From<SearchOperator> for search::SearchOperator {
+    fn from(value: SearchOperator) -> search::SearchOperator {
+        match value {
+            SearchOperator::AND => search::SearchOperator::And,
+            SearchOperator::OR => search::SearchOperator::Or,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
 pub struct SearchOptions {
     /// Whether or not to return the full document object in the search response.
     /// By default only the Document ID is returned to be used to fetch at a later time,
@@ -332,7 +337,7 @@ impl SearchOptions {
 
     pub fn with_include_documents(&mut self, include_documents: bool) -> Self {
         self.include_documents = include_documents;
-        self.clone()
+        *self
     }
 
     pub fn include_documents(&self) -> bool {
@@ -341,11 +346,11 @@ impl SearchOptions {
 
     pub fn with_search_operator(&mut self, operator: SearchOperator) -> Self {
         self.search_operator = operator;
-        self.clone()
+        *self
     }
 
     pub fn search_operator(&self) -> SearchOperator {
-        self.search_operator.clone()
+        self.search_operator
     }
 }
 
