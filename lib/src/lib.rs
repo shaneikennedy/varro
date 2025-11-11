@@ -205,6 +205,32 @@ impl Varro {
             .write_to_document(Path::new(&id.clone()), bytes)
     }
 
+    /// Execute multiple searches concurrently against the Varro index. Each query will get it's own result set.
+    /// This returns a mapping from the original query to the result set, i.e String -> Vec<(Document, Score)>
+    pub fn multi_search(
+        &self,
+        queries: Vec<&str>,
+        options: Option<SearchOptions>,
+    ) -> HashMap<String, impl Iterator<Item = (Document, Score)>> {
+        let mut results = HashMap::new();
+        thread::scope(|s| {
+            let mut threads = Vec::new();
+            for q in queries {
+                threads.push(s.spawn(move || {
+                    let r = self.search(q.into(), options);
+                    (q, r)
+                }));
+            }
+            threads
+                .into_iter()
+                .filter_map(|t| t.join().ok())
+                .for_each(|(q, r)| {
+                    results.insert(q.into(), r);
+                });
+        });
+        results
+    }
+
     /// Text search, given an input string query the index and return a list of Document Ids
     /// and their corresponding TDIDF score (higher is better) that match the search
     pub fn search(
@@ -394,6 +420,19 @@ mod varro_tests {
         let results: Vec<(Document, Score)> = results.collect();
         assert_eq!(results.len(), 1);
         assert_eq!(results.first().unwrap().0.id(), doc.id());
+        Ok(())
+    }
+
+    #[test]
+    fn test_multi_search() -> Result<()> {
+        let index = Varro::new(Path::new(""), FileSystemType::Temp).unwrap();
+        let mut doc = Document::default();
+        doc.add_field("name".into(), "varro testing".into(), true);
+        index.index(doc.clone()).unwrap();
+        index.flush()?;
+
+        let results = index.multi_search(vec!["varro", "testing"], None);
+        assert_eq!(results.len(), 2);
         Ok(())
     }
 
