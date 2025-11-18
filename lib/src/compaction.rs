@@ -37,6 +37,14 @@ impl SegmentCompactor {
         }
     }
 
+    pub(crate) fn with_compaction_frequency(&self, freq: Duration) {
+        *self.compaction_freq.lock().unwrap() = freq;
+    }
+
+    pub(crate) fn with_min_segment_size(&self, size: usize) {
+        *self.min_segment_size.lock().unwrap() = size;
+    }
+
     pub fn run(&self) -> Result<()> {
         while !*self.stop_signal.lock().unwrap() {
             let segments_guard = self.manifest.read().unwrap();
@@ -120,6 +128,33 @@ impl SegmentCompactor {
             drop(sleep_guard);
             thread::sleep(sleep);
         }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::filesystem::TempFileSystem;
+
+    use super::*;
+
+    #[test]
+    fn test_can_shutdown() -> Result<()> {
+        let fs = TempFileSystem::new(None)?;
+        let stop = Arc::new(Mutex::new(false));
+        let compactor = Arc::new(Mutex::new(SegmentCompactor::new(
+            stop.clone(),
+            Arc::new(RwLock::new(Manifest::new())),
+            Arc::new(Mutex::new(0)),
+            Arc::new(Mutex::new(Duration::from_secs(1))),
+            Arc::new(Box::new(fs)),
+        )));
+        let compactor_for_thread = compactor.clone();
+
+        let handle = thread::spawn(move || compactor_for_thread.lock().unwrap().run());
+
+        *stop.lock().unwrap() = true;
+        assert!(handle.join().is_ok());
         Ok(())
     }
 }

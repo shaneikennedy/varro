@@ -35,24 +35,20 @@ use crate::vector::VectorStore;
 
 /// The model for indexing, querying and retrieveing documents
 pub struct Varro {
+    /// A reference to the thread that is doing compaction that we can
+    /// join on when the Varro instance needs to be dropped
+    compaction_thread: Mutex<Option<JoinHandle<Result<()>>>>,
+
     /// Segment compactor is the handle to the background thread that's
     /// compacting segments when they get too big
-    segment_compactor: Mutex<Option<JoinHandle<Result<()>>>>,
+    segment_compactor: Arc<Mutex<SegmentCompactor>>,
 
-    /// Stop signal is how we kill the segment_compactor for Drop
+    /// Stop signal is used to stop the compaction thread when
+    /// Varro goes out of scope
     stop: Arc<Mutex<bool>>,
 
     /// Manifest file representation
     manifest: Arc<RwLock<Manifest>>,
-
-    /// How often to run segment compaction, defaults to 2 seconds.
-    compaction_freq: Arc<Mutex<Duration>>,
-
-    /// Minimum segment size is used to determine when a file should be compacted.
-    /// Segments are read into memory when searching, using lots of small segment files is worse
-    /// for performance but better when memory is constrained. Larger segments are better for performance
-    /// but cause spikes in memory on searches. Default is 64MB.
-    min_segment_size: Arc<Mutex<usize>>,
 
     /// The filesystem abstraction to accomodate different file stores. Default is LocalFileSystem
     filesystem: Arc<Box<dyn FileSystem>>,
@@ -94,11 +90,7 @@ impl Varro {
             }
             Err(_) => {
                 warn!("No manifest file found, starting a new one.");
-                Arc::new(RwLock::new(Manifest {
-                    segments: HashMap::new(),
-                    total_docs: 0,
-                    average_document_length: 0.0,
-                }))
+                Arc::new(RwLock::new(Manifest::new()))
             }
         };
         let vector_store = Arc::new(VectorStore::new(path));
@@ -110,23 +102,25 @@ impl Varro {
         // Setup the segment compactor thread
         let stop = Arc::new(Mutex::new(false));
         let compaction_freq = Arc::new(Mutex::new(Duration::from_secs(2)));
-        let segment_compactor = SegmentCompactor::new(
+        let segment_compactor = Arc::new(Mutex::new(SegmentCompactor::new(
             stop.clone(),
             manifest.clone(),
             min_segment_size.clone(),
             compaction_freq.clone(),
             filesystem.clone(),
-        );
-        let segment_compactor = Mutex::new(Some(thread::spawn(move || segment_compactor.run())));
+        )));
+        let compactor_for_thread = segment_compactor.clone();
+        let compaction_thread = Mutex::new(Some(thread::spawn(move || {
+            compactor_for_thread.lock().unwrap().run()
+        })));
 
         let flusher = Flusher::new(manifest.clone(), filesystem.clone(), vector_store.clone());
 
         let varro = Varro {
-            stop,
+            compaction_thread,
             segment_compactor,
+            stop,
             manifest,
-            compaction_freq,
-            min_segment_size,
             filesystem,
             searcher,
             flusher,
@@ -135,14 +129,24 @@ impl Varro {
     }
 
     /// Updates the Varro instance with a new `min_segment_size`
+    /// Minimum segment size is used to determine when a file should be compacted.
+    /// Segments are read into memory when searching, using lots of small segment files is worse
+    /// for performance but better when memory is constrained. Larger segments are better for performance
+    /// but cause spikes in memory on searches. Default is 64MB.
     pub fn with_min_segment_size(self, size: usize) -> Self {
-        *self.min_segment_size.lock().unwrap() = size;
+        self.segment_compactor
+            .lock()
+            .unwrap()
+            .with_min_segment_size(size);
         self
     }
 
     /// Update the Varro instance with a new `compaction_frequency`
     pub fn with_compaction_frequency(self, duration: Duration) -> Self {
-        *self.compaction_freq.lock().unwrap() = duration;
+        self.segment_compactor
+            .lock()
+            .unwrap()
+            .with_compaction_frequency(duration);
         self
     }
 
@@ -306,12 +310,17 @@ impl Varro {
 impl Drop for Varro {
     fn drop(&mut self) {
         *self.stop.lock().unwrap() = true;
-        if let Some(h) = self.segment_compactor.lock().unwrap().take() {
-            match h.join() {
-                Ok(_) => debug!("Successfully shut down the compactor thread."),
-                Err(_) => error!("Problem shutting down the compactor thread."),
-            }
-        };
+        match self
+            .compaction_thread
+            .lock()
+            .unwrap()
+            .take()
+            .unwrap()
+            .join()
+        {
+            Ok(_) => info!("Successfully shutdown the compaction thread"),
+            Err(_) => error!("Unable to shutdown the compaction thread"),
+        }
     }
 }
 
