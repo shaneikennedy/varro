@@ -2,7 +2,7 @@ use std::{
     path::Path,
     sync::{Arc, Mutex, RwLock},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::Result;
@@ -46,7 +46,14 @@ impl SegmentCompactor {
     }
 
     pub fn run(&self) -> Result<()> {
+        let mut timer = Instant::now();
         while !*self.stop_signal.lock().unwrap() {
+            let compaction_freq = self.compaction_freq.lock().unwrap();
+            if timer.elapsed() < *compaction_freq {
+                thread::sleep(Duration::from_secs(1));
+                drop(compaction_freq);
+                continue;
+            }
             let segments_guard = self.manifest.read().unwrap();
             debug!("Determine whate segments to compact");
             let segments_to_merge = segments_guard.segments.clone();
@@ -123,10 +130,8 @@ impl SegmentCompactor {
             } else {
                 debug!("No candidate segments for compaction.");
             }
-            let sleep_guard = self.compaction_freq.lock().unwrap();
-            let sleep = *sleep_guard;
-            drop(sleep_guard);
-            thread::sleep(sleep);
+            timer = Instant::now();
+            thread::sleep(Duration::from_secs(1));
         }
         Ok(())
     }
