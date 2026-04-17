@@ -115,6 +115,7 @@ impl Flusher {
         };
 
         buffer_guard.push(handle);
+        drop(buffer_guard);
         self.buffer_size.fetch_add(doc.size(), Ordering::SeqCst);
         if self.buffer_size.load(Ordering::SeqCst) > *self.max_buffer_size.lock().unwrap() {
             self.flush()?;
