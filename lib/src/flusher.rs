@@ -5,18 +5,18 @@ use std::{
     collections::HashSet,
     path::Path,
     sync::{
-        Arc, Mutex, RwLock,
         atomic::{AtomicUsize, Ordering},
+        Arc, Mutex, RwLock,
     },
     thread::{self, JoinHandle},
 };
 
 use crate::{
-    Document,
     filesystem::FileSystem,
     manifest::Manifest,
     segment::{DocumentSegment, Segment},
     vector::VectorStore,
+    Document,
 };
 
 pub(crate) enum FlushEventType {
@@ -212,7 +212,7 @@ impl Flusher {
             self.filesystem.write_to_manifest(bytes)?;
 
             // Remove vector search entries
-            self.vector_store.remove_document(&document_to_delete)?;
+            // self.vector_store.remove_document(&document_to_delete)?;
 
             // remove old segment
             self.filesystem
@@ -304,8 +304,8 @@ impl Flusher {
             self.filesystem.write_to_manifest(bytes)?;
 
             // Remove vector search entries for old, and re-insert new
-            self.vector_store.remove_document(&document)?;
-            self.vector_store.insert_document(&document)?;
+            // self.vector_store.remove_document(&document)?;
+            // self.vector_store.insert_document(&document)?;
 
             // remove old segment
             self.filesystem
@@ -320,7 +320,7 @@ impl Flusher {
         for event in insert_events {
             let doc_seg = event.doc_seg;
             segment.add_docucment_segment(&doc_seg);
-            self.vector_store.insert_document(&doc_seg.document())?;
+            // self.vector_store.insert_document(&doc_seg.document())?;
             self.manifest.write().unwrap().total_docs += 1;
         }
         debug!("Writting new segmenet to disk");
