@@ -54,6 +54,7 @@ impl SegmentCompactor {
                 drop(compaction_freq);
                 continue;
             }
+            drop(compaction_freq);
             let segments_guard = self.manifest.read().unwrap();
             debug!("Determine whate segments to compact");
             let segments_to_merge = segments_guard.segments.clone();
