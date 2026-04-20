@@ -5,18 +5,18 @@ use std::{
     collections::HashSet,
     path::Path,
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc, Mutex, RwLock,
+        atomic::{AtomicUsize, Ordering},
     },
     thread::{self, JoinHandle},
 };
 
 use crate::{
+    Document,
     filesystem::FileSystem,
     manifest::Manifest,
     segment::{DocumentSegment, Segment},
     vector::VectorStore,
-    Document,
 };
 
 pub(crate) enum FlushEventType {
