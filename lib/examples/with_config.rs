@@ -18,6 +18,7 @@ fn main() {
                 min_segment_size: 1_000_000_000_000,
                 compaction_frequency: Duration::from_secs(5),
             },
+            semantic_search: varro::options::SemanticSearchOptions::new(true),
         },
     )
     .unwrap();

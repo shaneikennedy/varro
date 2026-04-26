@@ -19,14 +19,8 @@ pub fn main() -> Result<()> {
             Err(_) => panic!("something weird, entry in dir is not ok"),
         }
     }
-    let search_engine = varro::Varro::new(
-        Path::new("./.index"),
-        varro::options::Options {
-            filesystem: varro::options::FileSystemType::Local,
-            flush: varro::options::FlushOptions::default(),
-            compaction: varro::options::CompactionOptions::default(),
-        },
-    )?;
+    let search_engine =
+        varro::Varro::new(Path::new("./.index"), varro::options::Options::default())?;
     for file in files {
         let path = Path::new("./documents").join(file.clone());
         info!("path: {:#?}", path.clone());

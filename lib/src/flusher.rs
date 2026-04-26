@@ -72,7 +72,7 @@ impl InsertEvent {
 pub(crate) struct Flusher {
     manifest: Arc<RwLock<Manifest>>,
     filesystem: Arc<Box<dyn FileSystem>>,
-    vector_store: Arc<VectorStore>,
+    vector_store: Option<Arc<VectorStore>>,
     buffer: Mutex<Vec<JoinHandle<FlushEvent>>>,
     /// Internal counter for how big the buffer is for flushing purposes.
     buffer_size: AtomicUsize,
@@ -83,7 +83,7 @@ impl Flusher {
     pub(crate) fn new(
         manifest: Arc<RwLock<Manifest>>,
         filesystem: Arc<Box<dyn FileSystem>>,
-        vector_store: Arc<VectorStore>,
+        vector_store: Option<Arc<VectorStore>>,
         opts: options::FlushOptions,
     ) -> Self {
         Self {
@@ -209,7 +209,10 @@ impl Flusher {
             self.filesystem.write_to_manifest(bytes)?;
 
             // Remove vector search entries
-            // self.vector_store.remove_document(&document_to_delete)?;
+            match &self.vector_store {
+                Some(vs) => vs.remove_document(&document_to_delete),
+                None => Ok(()),
+            }?;
 
             // remove old segment
             self.filesystem
@@ -301,8 +304,13 @@ impl Flusher {
             self.filesystem.write_to_manifest(bytes)?;
 
             // Remove vector search entries for old, and re-insert new
-            // self.vector_store.remove_document(&document)?;
-            // self.vector_store.insert_document(&document)?;
+            match &self.vector_store {
+                Some(vs) => {
+                    vs.remove_document(&document)?;
+                    vs.insert_document(&document)
+                }
+                None => Ok(()),
+            }?;
 
             // remove old segment
             self.filesystem
@@ -317,7 +325,10 @@ impl Flusher {
         for event in insert_events {
             let doc_seg = event.doc_seg;
             segment.add_docucment_segment(&doc_seg);
-            // self.vector_store.insert_document(&doc_seg.document())?;
+            match &self.vector_store {
+                Some(vs) => vs.insert_document(&doc_seg.document()),
+                None => Ok(()),
+            }?;
             self.manifest.write().unwrap().total_docs += 1;
         }
         debug!("Writting new segmenet to disk");

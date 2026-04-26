@@ -21,7 +21,9 @@ mod vector;
 mod vql;
 
 pub use document::{Document, Field};
-pub use options::{CompactionOptions, FileSystemType, FlushOptions, Options};
+pub use options::{
+    CompactionOptions, FileSystemType, FlushOptions, Options, SemanticSearchOptions,
+};
 pub use ranking::RankingType;
 
 use crate::compaction::SegmentCompactor;
@@ -103,7 +105,7 @@ impl Varro {
         let flusher = Flusher::new(
             manifest.clone(),
             filesystem.clone(),
-            vector_store.clone(),
+            opts.semantic_search.enabled.then_some(vector_store.clone()),
             opts.flush,
         );
 
@@ -362,6 +364,7 @@ mod varro_tests {
                 filesystem: options::FileSystemType::Temp,
                 flush: options::FlushOptions::default(),
                 compaction: options::CompactionOptions::default(),
+                semantic_search: options::SemanticSearchOptions::default(),
             },
         )
         .unwrap();
@@ -375,6 +378,7 @@ mod varro_tests {
                 filesystem: options::FileSystemType::Temp,
                 flush: options::FlushOptions::default(),
                 compaction: options::CompactionOptions::default(),
+                semantic_search: options::SemanticSearchOptions::default(),
             },
         )
         .unwrap();
@@ -392,6 +396,7 @@ mod varro_tests {
                 filesystem: options::FileSystemType::Temp,
                 flush: options::FlushOptions::default(),
                 compaction: options::CompactionOptions::default(),
+                semantic_search: options::SemanticSearchOptions::default(),
             },
         )
         .unwrap();
@@ -410,6 +415,7 @@ mod varro_tests {
                 filesystem: options::FileSystemType::Temp,
                 flush: options::FlushOptions::default(),
                 compaction: options::CompactionOptions::default(),
+                semantic_search: options::SemanticSearchOptions::default(),
             },
         )
         .unwrap();
@@ -433,6 +439,7 @@ mod varro_tests {
                 filesystem: options::FileSystemType::Temp,
                 flush: options::FlushOptions::default(),
                 compaction: options::CompactionOptions::default(),
+                semantic_search: options::SemanticSearchOptions::default(),
             },
         )
         .unwrap();
@@ -454,6 +461,7 @@ mod varro_tests {
                 filesystem: options::FileSystemType::Temp,
                 flush: options::FlushOptions::default(),
                 compaction: options::CompactionOptions::default(),
+                semantic_search: options::SemanticSearchOptions::default(),
             },
         )
         .unwrap();
@@ -486,6 +494,7 @@ mod varro_tests {
                 filesystem: options::FileSystemType::Temp,
                 flush: options::FlushOptions::default(),
                 compaction: options::CompactionOptions::default(),
+                semantic_search: options::SemanticSearchOptions::default(),
             },
         )
         .unwrap();
