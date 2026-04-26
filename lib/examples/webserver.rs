@@ -2,7 +2,7 @@ use actix_web::{App, HttpServer, Responder, Result, get, web};
 use log::{LevelFilter, info, warn};
 use serde::{Deserialize, Serialize};
 use std::{cmp::Ordering, fs, path::Path, sync::Arc};
-use varro::{FileSystemType, Varro};
+use varro::Varro;
 
 #[derive(Serialize)]
 struct SearchResults {
@@ -60,8 +60,17 @@ async fn main() -> std::io::Result<()> {
             Err(_) => panic!("something weird, entry in dir is not ok"),
         }
     }
-    let search_engine =
-        Arc::new(varro::Varro::new(Path::new("./.index"), FileSystemType::Local).unwrap());
+    let search_engine = Arc::new(
+        varro::Varro::new(
+            Path::new("./.index"),
+            varro::options::Options {
+                filesystem: varro::options::FileSystemType::Local,
+                flush: varro::options::FlushOptions::default(),
+                compaction: varro::options::CompactionOptions::default(),
+            },
+        )
+        .unwrap(),
+    );
 
     if search_engine.index_size() == 0 {
         warn!("There are no documents in the index, try running the ingest exmaple first");

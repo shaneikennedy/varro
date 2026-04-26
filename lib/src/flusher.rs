@@ -15,6 +15,7 @@ use crate::{
     Document,
     filesystem::FileSystem,
     manifest::Manifest,
+    options,
     segment::{DocumentSegment, Segment},
     vector::VectorStore,
 };
@@ -67,6 +68,7 @@ impl InsertEvent {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) struct Flusher {
     manifest: Arc<RwLock<Manifest>>,
     filesystem: Arc<Box<dyn FileSystem>>,
@@ -74,7 +76,7 @@ pub(crate) struct Flusher {
     buffer: Mutex<Vec<JoinHandle<FlushEvent>>>,
     /// Internal counter for how big the buffer is for flushing purposes.
     buffer_size: AtomicUsize,
-    max_buffer_size: Mutex<usize>,
+    max_buffer_size: usize,
 }
 
 impl Flusher {
@@ -82,6 +84,7 @@ impl Flusher {
         manifest: Arc<RwLock<Manifest>>,
         filesystem: Arc<Box<dyn FileSystem>>,
         vector_store: Arc<VectorStore>,
+        opts: options::FlushOptions,
     ) -> Self {
         Self {
             manifest,
@@ -89,14 +92,8 @@ impl Flusher {
             vector_store,
             buffer: Mutex::new(Vec::new()),
             buffer_size: AtomicUsize::new(0),
-            max_buffer_size: Mutex::new(50_000_000),
+            max_buffer_size: opts.max_buffer_size,
         }
-    }
-
-    /// Update the Flusher instance with a new `max_buffer_size` to control when
-    /// Varro flushes automatically
-    pub(crate) fn with_max_buffer_size(&self, size: usize) {
-        *self.max_buffer_size.lock().unwrap() = size;
     }
 
     pub(crate) fn submit(&self, doc: Document, event_type: FlushEventType) -> Result<()> {
@@ -117,7 +114,7 @@ impl Flusher {
         buffer_guard.push(handle);
         drop(buffer_guard);
         self.buffer_size.fetch_add(doc.size(), Ordering::SeqCst);
-        if self.buffer_size.load(Ordering::SeqCst) > *self.max_buffer_size.lock().unwrap() {
+        if self.buffer_size.load(Ordering::SeqCst) > self.max_buffer_size {
             self.flush()?;
         }
 

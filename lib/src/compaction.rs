@@ -15,8 +15,8 @@ use crate::{filesystem::FileSystem, manifest::Manifest, segment::Segment};
 pub(crate) struct SegmentCompactor {
     stop_signal: Arc<Mutex<bool>>,
     manifest: Arc<RwLock<Manifest>>,
-    min_segment_size: Arc<Mutex<usize>>,
-    compaction_freq: Arc<Mutex<Duration>>,
+    min_segment_size: usize,
+    compaction_freq: Duration,
     filesystem: Arc<Box<dyn FileSystem>>,
 }
 
@@ -24,8 +24,8 @@ impl SegmentCompactor {
     pub fn new(
         stop_signal: Arc<Mutex<bool>>,
         manifest: Arc<RwLock<Manifest>>,
-        min_segment_size: Arc<Mutex<usize>>,
-        compaction_freq: Arc<Mutex<Duration>>,
+        min_segment_size: usize,
+        compaction_freq: Duration,
         filesystem: Arc<Box<dyn FileSystem>>,
     ) -> Self {
         SegmentCompactor {
@@ -37,34 +37,20 @@ impl SegmentCompactor {
         }
     }
 
-    pub(crate) fn with_compaction_frequency(&self, freq: Duration) {
-        *self.compaction_freq.lock().unwrap() = freq;
-    }
-
-    pub(crate) fn with_min_segment_size(&self, size: usize) {
-        *self.min_segment_size.lock().unwrap() = size;
-    }
-
     pub fn run(&self) -> Result<()> {
         let mut timer = Instant::now();
         while !*self.stop_signal.lock().unwrap() {
-            let compaction_freq = self.compaction_freq.lock().unwrap();
-            if timer.elapsed() < *compaction_freq {
+            if timer.elapsed() < self.compaction_freq {
                 thread::sleep(Duration::from_secs(1));
-                drop(compaction_freq);
                 continue;
             }
-            drop(compaction_freq);
             let segments_guard = self.manifest.read().unwrap();
             debug!("Determine whate segments to compact");
             let segments_to_merge = segments_guard.segments.clone();
             drop(segments_guard);
-            let min_size_guard = self.min_segment_size.lock().unwrap();
-            let min_segment_size = *min_size_guard;
-            drop(min_size_guard);
             let segments_to_merge = segments_to_merge
                 .iter()
-                .filter(|&(_, &size)| size <= min_segment_size)
+                .filter(|&(_, &size)| size <= self.min_segment_size)
                 .clone();
             let mut merged_segment = Segment::new();
             if segments_to_merge.clone().count() > 1 {
@@ -151,8 +137,8 @@ mod tests {
         let compactor = Arc::new(Mutex::new(SegmentCompactor::new(
             stop.clone(),
             Arc::new(RwLock::new(Manifest::new())),
-            Arc::new(Mutex::new(0)),
-            Arc::new(Mutex::new(Duration::from_secs(1))),
+            0,
+            Duration::from_secs(1),
             Arc::new(Box::new(fs)),
         )));
         let compactor_for_thread = compactor.clone();

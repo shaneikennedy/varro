@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
 
 use anyhow::{Error, Result};
 use bincode::config;
@@ -13,6 +12,7 @@ pub mod document;
 mod filesystem;
 mod flusher;
 mod manifest;
+pub mod options;
 mod ranking;
 mod search;
 mod segment;
@@ -21,6 +21,7 @@ mod vector;
 mod vql;
 
 pub use document::{Document, Field};
+pub use options::{CompactionOptions, FileSystemType, FlushOptions, Options};
 pub use ranking::RankingType;
 
 use crate::compaction::SegmentCompactor;
@@ -39,10 +40,6 @@ pub struct Varro {
     /// join on when the Varro instance needs to be dropped
     compaction_thread: Mutex<Option<JoinHandle<Result<()>>>>,
 
-    /// Segment compactor is the handle to the background thread that's
-    /// compacting segments when they get too big
-    segment_compactor: Arc<Mutex<SegmentCompactor>>,
-
     /// Stop signal is used to stop the compaction thread when
     /// Varro goes out of scope
     stop: Arc<Mutex<bool>>,
@@ -60,21 +57,14 @@ pub struct Varro {
     flusher: Flusher,
 }
 
-pub enum FileSystemType {
-    Local,
-    Temp,
-    #[cfg(feature = "s3")]
-    S3,
-}
-
 impl Varro {
     /// Contruct a new instance of Varro
-    pub fn new(path: &Path, file_system_type: FileSystemType) -> Result<Varro> {
-        let filesystem: Box<dyn FileSystem> = match file_system_type {
-            FileSystemType::Local => Box::new(LocalFileSystem::new(path)?),
-            FileSystemType::Temp => Box::new(TempFileSystem::new(Some(path))?),
+    pub fn new(path: &Path, opts: options::Options) -> Result<Varro> {
+        let filesystem: Box<dyn FileSystem> = match opts.filesystem {
+            options::FileSystemType::Local => Box::new(LocalFileSystem::new(path)?),
+            options::FileSystemType::Temp => Box::new(TempFileSystem::new(Some(path))?),
             #[cfg(feature = "s3")]
-            FileSystemType::S3 => Box::new(S3FileSystem::new(path)?),
+            options::FileSystemType::S3 => Box::new(S3FileSystem::new(path)?),
         };
         let filesystem: Arc<Box<dyn FileSystem>> = Arc::new(filesystem);
 
@@ -97,28 +87,28 @@ impl Varro {
 
         let searcher = Searcher::new(filesystem.clone(), manifest.clone(), vector_store.clone());
 
-        let min_segment_size = Arc::new(Mutex::new(64000000));
-
         // Setup the segment compactor thread
         let stop = Arc::new(Mutex::new(false));
-        let compaction_freq = Arc::new(Mutex::new(Duration::from_secs(2)));
-        let segment_compactor = Arc::new(Mutex::new(SegmentCompactor::new(
+        let segment_compactor = Mutex::new(SegmentCompactor::new(
             stop.clone(),
             manifest.clone(),
-            min_segment_size.clone(),
-            compaction_freq.clone(),
+            opts.compaction.min_segment_size,
+            opts.compaction.compaction_frequency,
             filesystem.clone(),
-        )));
-        let compactor_for_thread = segment_compactor.clone();
+        ));
         let compaction_thread = Mutex::new(Some(thread::spawn(move || {
-            compactor_for_thread.lock().unwrap().run()
+            segment_compactor.lock().unwrap().run()
         })));
 
-        let flusher = Flusher::new(manifest.clone(), filesystem.clone(), vector_store.clone());
+        let flusher = Flusher::new(
+            manifest.clone(),
+            filesystem.clone(),
+            vector_store.clone(),
+            opts.flush,
+        );
 
         let varro = Varro {
             compaction_thread,
-            segment_compactor,
             stop,
             manifest,
             filesystem,
@@ -126,35 +116,6 @@ impl Varro {
             flusher,
         };
         Ok(varro)
-    }
-
-    /// Updates the Varro instance with a new `min_segment_size`
-    /// Minimum segment size is used to determine when a file should be compacted.
-    /// Segments are read into memory when searching, using lots of small segment files is worse
-    /// for performance but better when memory is constrained. Larger segments are better for performance
-    /// but cause spikes in memory on searches. Default is 64MB.
-    pub fn with_min_segment_size(self, size: usize) -> Self {
-        self.segment_compactor
-            .lock()
-            .unwrap()
-            .with_min_segment_size(size);
-        self
-    }
-
-    /// Update the Varro instance with a new `compaction_frequency`
-    pub fn with_compaction_frequency(self, duration: Duration) -> Self {
-        self.segment_compactor
-            .lock()
-            .unwrap()
-            .with_compaction_frequency(duration);
-        self
-    }
-
-    /// Update the Varro instance with a new `max_buffer_size` to control when
-    /// Varro flushes automatically
-    pub fn with_max_buffer_size(self, size: usize) -> Self {
-        self.flusher.with_max_buffer_size(size);
-        self
     }
 
     /// The total number of docs in the Varro index
@@ -395,12 +356,28 @@ mod varro_tests {
 
     #[test]
     fn test_new() {
-        Varro::new(Path::new(""), FileSystemType::Temp).unwrap();
+        Varro::new(
+            Path::new(""),
+            options::Options {
+                filesystem: options::FileSystemType::Temp,
+                flush: options::FlushOptions::default(),
+                compaction: options::CompactionOptions::default(),
+            },
+        )
+        .unwrap();
     }
 
     #[test]
     fn test_index() -> Result<()> {
-        let index = Varro::new(Path::new(""), FileSystemType::Temp).unwrap();
+        let index = Varro::new(
+            Path::new(""),
+            options::Options {
+                filesystem: options::FileSystemType::Temp,
+                flush: options::FlushOptions::default(),
+                compaction: options::CompactionOptions::default(),
+            },
+        )
+        .unwrap();
         let mut doc = Document::default();
         doc.add_field("name".into(), "varro testing".into(), false);
         index.index(doc)?;
@@ -409,7 +386,15 @@ mod varro_tests {
 
     #[test]
     fn test_flush() -> Result<()> {
-        let index = Varro::new(Path::new(""), FileSystemType::Temp).unwrap();
+        let index = Varro::new(
+            Path::new(""),
+            options::Options {
+                filesystem: options::FileSystemType::Temp,
+                flush: options::FlushOptions::default(),
+                compaction: options::CompactionOptions::default(),
+            },
+        )
+        .unwrap();
         let mut doc = Document::default();
         doc.add_field("name".into(), "varro testing".into(), false);
         index.index(doc.clone()).unwrap();
@@ -419,7 +404,15 @@ mod varro_tests {
 
     #[test]
     fn test_search() -> Result<()> {
-        let index = Varro::new(Path::new(""), FileSystemType::Temp).unwrap();
+        let index = Varro::new(
+            Path::new(""),
+            options::Options {
+                filesystem: options::FileSystemType::Temp,
+                flush: options::FlushOptions::default(),
+                compaction: options::CompactionOptions::default(),
+            },
+        )
+        .unwrap();
         let mut doc = Document::default();
         doc.add_field("name".into(), "varro testing".into(), true);
         index.index(doc.clone()).unwrap();
@@ -434,7 +427,15 @@ mod varro_tests {
 
     #[test]
     fn test_multi_search() -> Result<()> {
-        let index = Varro::new(Path::new(""), FileSystemType::Temp).unwrap();
+        let index = Varro::new(
+            Path::new(""),
+            options::Options {
+                filesystem: options::FileSystemType::Temp,
+                flush: options::FlushOptions::default(),
+                compaction: options::CompactionOptions::default(),
+            },
+        )
+        .unwrap();
         let mut doc = Document::default();
         doc.add_field("name".into(), "varro testing".into(), true);
         index.index(doc.clone()).unwrap();
@@ -447,7 +448,15 @@ mod varro_tests {
 
     #[test]
     fn test_remove() -> Result<()> {
-        let index = Varro::new(Path::new(""), FileSystemType::Temp).unwrap();
+        let index = Varro::new(
+            Path::new(""),
+            options::Options {
+                filesystem: options::FileSystemType::Temp,
+                flush: options::FlushOptions::default(),
+                compaction: options::CompactionOptions::default(),
+            },
+        )
+        .unwrap();
         let mut doc = Document::default();
         doc.add_field("name".into(), "varro testing".into(), true);
         index.index(doc.clone()).unwrap();
@@ -471,7 +480,15 @@ mod varro_tests {
 
     #[test]
     fn test_update() -> Result<()> {
-        let index = Varro::new(Path::new(""), FileSystemType::Temp).unwrap();
+        let index = Varro::new(
+            Path::new(""),
+            options::Options {
+                filesystem: options::FileSystemType::Temp,
+                flush: options::FlushOptions::default(),
+                compaction: options::CompactionOptions::default(),
+            },
+        )
+        .unwrap();
         let mut doc = Document::default();
         doc.add_field("name".into(), "varro testing".into(), true);
         index.index(doc.clone()).unwrap();

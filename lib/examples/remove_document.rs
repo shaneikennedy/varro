@@ -5,7 +5,6 @@ use std::{
 
 use anyhow::{Context, Result};
 use log::{LevelFilter, info};
-use varro::FileSystemType;
 
 pub fn main() -> Result<()> {
     env_logger::builder().filter_level(LevelFilter::Info).init();
@@ -18,7 +17,14 @@ pub fn main() -> Result<()> {
             Err(_) => panic!("something weird, entry in dir is not ok"),
         }
     }
-    let search_engine = varro::Varro::new(Path::new("./.index"), FileSystemType::Local)?;
+    let search_engine = varro::Varro::new(
+        Path::new("./.index"),
+        varro::options::Options {
+            filesystem: varro::options::FileSystemType::Local,
+            flush: varro::options::FlushOptions::default(),
+            compaction: varro::options::CompactionOptions::default(),
+        },
+    )?;
     assert!(
         search_engine.index_size() == 0,
         "this example won't work properly unless the index is empty"

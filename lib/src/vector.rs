@@ -15,6 +15,7 @@ pub struct VectorStore {
 }
 
 // add a default and make new() accept a model and db for easier testing
+#[allow(dead_code)]
 impl VectorStore {
     pub fn new(path: &Path) -> Self {
         unsafe {
